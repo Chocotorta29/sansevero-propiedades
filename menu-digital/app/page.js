@@ -12,12 +12,8 @@ export default function MenuPage() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Estado del local (Abierto / Cerrado)
-  const [isOpenNow, setIsOpenNow] = useState(false);
+  // Estado de apertura manual
   const [isForcedClosed, setIsForcedClosed] = useState(false);
-
-  // Modal Aviso de Local Cerrado
-  const [showClosedModal, setShowClosedModal] = useState(false);
 
   // Desplegable Horarios
   const [isHoursOpen, setIsHoursOpen] = useState(false);
@@ -28,9 +24,12 @@ export default function MenuPage() {
   const [availableAddons, setAvailableAddons] = useState([]);
   const [itemNotes, setItemNotes] = useState('');
 
-  // Estructura por cada unidad
+  // Estructura por cada unidad (para platos no-empanada)
   const [unitsData, setUnitsData] = useState([]);
   const [openUnitIndex, setOpenUnitIndex] = useState(0);
+
+  // Selección acumulada unificada (para Empanadas)
+  const [empFlavors, setEmpFlavors] = useState({});
 
   // Datos Pedido
   const [customerName, setCustomerName] = useState('');
@@ -38,59 +37,68 @@ export default function MenuPage() {
   const [address, setAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
 
-  // NUEVO NÚMERO ACTUALIZADO
-  const PHONE_NUMBER = '542236819158';
+  // DATOS DEL NEGOCIO: COMO EN CASA
+  const PHONE_NUMBER = '5492236036415';
 
-  const schedule = [
-    { day: 'Lunes', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-    { day: 'Martes', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:59' },
-    { day: 'Miércoles', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-    { day: 'Jueves', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-    { day: 'Viernes', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-    { day: 'Sábado', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-    { day: 'Domingo', open1: '12:00', close1: '15:15', open2: '20:00', close2: '23:15' },
-  ];
+  const schedule = useMemo(() => [
+    { day: 'Lunes', dayIndex: 1, closed: true },
+    { day: 'Martes', dayIndex: 2, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Miércoles', dayIndex: 3, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Jueves', dayIndex: 4, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Viernes', dayIndex: 5, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Sábado', dayIndex: 6, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Domingo', dayIndex: 0, open1: '11:30', close1: '14:30', singleShift: true },
+  ], []);
 
-  // Evaluar si el local está abierto según horarios y freno manual
-  const checkIfOpen = useCallback(async () => {
-    const { data: config } = await supabase.from('store_config').select('is_forced_closed').eq('id', 1).single();
-    
-    if (config && config.is_forced_closed) {
-      setIsForcedClosed(true);
-      setIsOpenNow(false);
-      return;
-    }
-
-    setIsForcedClosed(false);
+  // EVALUAR SI EL LOCAL ESTÁ ABIERTO EN TIEMPO REAL
+  const isOpenNow = useMemo(() => {
+    if (isForcedClosed) return false;
 
     const now = new Date();
-    const currentDayIdx = (now.getDay() + 6) % 7;
-    const currentSchedule = schedule[currentDayIdx];
-
+    const currentDayIndex = now.getDay(); // 0 = Domingo, 1 = Lunes, etc.
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const parseTimeToMinutes = (timeStr) => {
+    const todayConfig = schedule.find((s) => s.dayIndex === currentDayIndex);
+    if (!todayConfig || todayConfig.closed) return false;
+
+    const timeToMinutes = (timeStr) => {
+      if (!timeStr) return 0;
       const [h, m] = timeStr.split(':').map(Number);
       return h * 60 + m;
     };
 
-    const start1 = parseTimeToMinutes(currentSchedule.open1);
-    const end1 = parseTimeToMinutes(currentSchedule.close1);
-    const start2 = parseTimeToMinutes(currentSchedule.open2);
-    const end2 = parseTimeToMinutes(currentSchedule.close2);
+    // Turno 1
+    const o1 = timeToMinutes(todayConfig.open1);
+    const c1 = timeToMinutes(todayConfig.close1);
+    const inShift1 = currentMinutes >= o1 && currentMinutes <= c1;
 
-    const isOpenShift1 = currentMinutes >= start1 && currentMinutes <= end1;
-    const isOpenShift2 = currentMinutes >= start2 && currentMinutes <= end2;
+    if (inShift1) return true;
 
-    setIsOpenNow(isOpenShift1 || isOpenShift2);
-  }, []);
+    // Turno 2 (si aplica)
+    if (!todayConfig.singleShift && todayConfig.open2 && todayConfig.close2) {
+      const o2 = timeToMinutes(todayConfig.open2);
+      const c2 = timeToMinutes(todayConfig.close2);
+      return currentMinutes >= o2 && currentMinutes <= c2;
+    }
+
+    return false;
+  }, [isForcedClosed, schedule]);
 
   useEffect(() => {
     fetchMenuData();
-    checkIfOpen();
-    const interval = setInterval(checkIfOpen, 30000);
-    return () => clearInterval(interval);
-  }, [checkIfOpen]);
+    fetchStoreConfig();
+  }, []);
+
+  async function fetchStoreConfig() {
+    try {
+      const { data } = await supabase.from('store_config').select('is_forced_closed').eq('id', 1).single();
+      if (data) {
+        setIsForcedClosed(data.is_forced_closed || false);
+      }
+    } catch (err) {
+      console.error('Error al cargar config:', err);
+    }
+  }
 
   async function fetchMenuData() {
     setLoading(true);
@@ -109,13 +117,16 @@ export default function MenuPage() {
 
       if (cats && cats.length > 0) {
         const customOrder = [
-          'sandwiches', 'sanguches', 'sándwiches', 'sandwich',
-          'guarniciones', 'guarnicion',
-          'pizzas rectangulares', 'pizzas', 'pizza',
-          'empanadas', 'empanada',
-          'ensaladas', 'ensalada',
-          'bebidas', 'bebida',
-          'postres', 'postre'
+          'sugerencias',
+          'pastas',
+          'milanesas',
+          'hamburguesas',
+          'ensaladas',
+          'tartas',
+          'pizzas',
+          'empanadas',
+          'postres',
+          'promociones'
         ];
 
         const sortedCats = [...cats].sort((a, b) => {
@@ -163,27 +174,30 @@ export default function MenuPage() {
     }
   }
 
+  const isEmpanadaProduct = useCallback((product) => {
+    if (!product) return false;
+    const prodName = product.name.toLowerCase();
+    const catObj = categories.find((c) => c.id === product.category_id);
+    const catName = (catObj?.name || '').toLowerCase();
+    return prodName.includes('empanada') || catName.includes('empanada');
+  }, [categories]);
+
   const filteredProducts = useMemo(() => {
     if (!selectedCategory) return [];
     return products.filter((p) => p.category_id === selectedCategory);
   }, [products, selectedCategory]);
 
   const openProductModal = useCallback((product) => {
-    // Si el local está cerrado, advertir al usuario y bloquear selección
-    if (!isOpenNow) {
-      setShowClosedModal(true);
-      return;
-    }
-
     setSelectedProduct(product);
     setProductQuantity(1);
     setUnitsData([{ selectedAddons: [], flavorQuantities: {} }]);
     setOpenUnitIndex(0);
+    setEmpFlavors({});
     setItemNotes('');
 
     const addons = productAddonsMap[product.id] || [];
     setAvailableAddons(addons);
-  }, [productAddonsMap, isOpenNow]);
+  }, [productAddonsMap]);
 
   const handleQuantityChange = useCallback((newQty) => {
     if (newQty < 1) return;
@@ -204,23 +218,40 @@ export default function MenuPage() {
     setOpenUnitIndex((prev) => (prev >= newQty ? newQty - 1 : prev));
   }, []);
 
-  const toggleAddonForUnit = useCallback((unitIndex, addon) => {
-    setUnitsData((prev) => {
-      const updated = [...prev];
-      const unit = { ...updated[unitIndex] };
-      const exists = unit.selectedAddons.some((a) => a.id === addon.id);
+  // Lógica acumulada para EMPANADAS
+  const totalEmpanadaLimit = useMemo(() => {
+    if (!selectedProduct) return 0;
+    const baseMax = selectedProduct.max_flavors || 1;
+    return baseMax * productQuantity;
+  }, [selectedProduct, productQuantity]);
 
-      if (exists) {
-        unit.selectedAddons = unit.selectedAddons.filter((a) => a.id !== addon.id);
-      } else {
-        unit.selectedAddons = [...unit.selectedAddons, addon];
+  const currentEmpFlavorsCount = useMemo(() => {
+    return Object.values(empFlavors).reduce((s, qty) => s + qty, 0);
+  }, [empFlavors]);
+
+  const updateEmpanadaFlavorQuantity = useCallback((addonId, delta) => {
+    setEmpFlavors((prev) => {
+      const current = prev[addonId] || 0;
+      let next = current + delta;
+
+      if (delta > 0 && currentEmpFlavorsCount >= totalEmpanadaLimit) {
+        return prev;
       }
 
-      updated[unitIndex] = unit;
+      next = Math.max(0, next);
+      const updated = { ...prev };
+
+      if (next === 0) {
+        delete updated[addonId];
+      } else {
+        updated[addonId] = next;
+      }
+
       return updated;
     });
-  }, []);
+  }, [currentEmpFlavorsCount, totalEmpanadaLimit]);
 
+  // Lógica de unidades independientes para OTROS PLATOS
   const updateFlavorQuantityForUnit = useCallback((unitIndex, addonId, delta) => {
     if (!selectedProduct) return;
 
@@ -232,12 +263,36 @@ export default function MenuPage() {
       const current = flavorMap[addonId] || 0;
       let next = current + delta;
 
-      const allowRep = selectedProduct.allow_flavor_repetition ?? true;
-      const maxFlavorsUnit = selectedProduct.max_flavors || 0;
-      const currentUnitTotal = Object.values(flavorMap).reduce((a, b) => a + b, 0);
+      const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+      const groupName = (addon?.category || '').toLowerCase();
 
-      if (!allowRep && next > 1) next = 1;
-      if (delta > 0 && currentUnitTotal >= maxFlavorsUnit) return prev;
+      const maxFlavorsUnit = selectedProduct.max_flavors || 0;
+      const allowRepetition = selectedProduct.allow_flavor_repetition ?? true;
+
+      if (!allowRepetition && delta > 0 && current >= 1) {
+        return prev;
+      }
+
+      const isCarneGroup = groupName.includes('tipo de carne') || groupName === 'carne' || groupName === 'tipo';
+      if (isCarneGroup && delta > 0) {
+        Object.keys(flavorMap).forEach((id) => {
+          const item = availableAddons.find((a) => a.id === id) || allAddonsMap[id];
+          const cat = (item?.category || '').toLowerCase();
+          if (cat.includes('tipo de carne') || cat === 'carne' || cat === 'tipo') {
+            delete flavorMap[id];
+          }
+        });
+        next = 1;
+      }
+
+      if (maxFlavorsUnit > 0 && delta > 0 && !isCarneGroup) {
+        const groupAddons = availableAddons.filter((a) => (a.category || '').toLowerCase() === groupName);
+        const currentGroupTotal = groupAddons.reduce((s, a) => s + (flavorMap[a.id] || 0), 0);
+
+        if (currentGroupTotal >= maxFlavorsUnit) {
+          return prev;
+        }
+      }
 
       next = Math.max(0, next);
 
@@ -250,69 +305,111 @@ export default function MenuPage() {
       unit.flavorQuantities = flavorMap;
       updated[unitIndex] = unit;
 
-      const newTotal = Object.values(flavorMap).reduce((a, b) => a + b, 0);
-      if (newTotal === maxFlavorsUnit && unitIndex < updated.length - 1) {
-        setOpenUnitIndex(unitIndex + 1);
-      }
-
       return updated;
     });
-  }, [selectedProduct]);
+  }, [selectedProduct, availableAddons, allAddonsMap]);
 
-  const getUnitFlavorsTotal = (unit) => {
-    if (!unit || !unit.flavorQuantities) return 0;
-    return Object.values(unit.flavorQuantities).reduce((a, b) => a + b, 0);
-  };
-
+  // VALIDACIÓN POR SECCIONES
   const isAllUnitsValid = useCallback(() => {
     if (!selectedProduct) return false;
     if (!selectedProduct.allows_flavor_selection) return true;
 
-    const maxFlavors = selectedProduct.max_flavors || 0;
-    return unitsData.every((unit) => getUnitFlavorsTotal(unit) === maxFlavors);
-  }, [selectedProduct, unitsData]);
+    if (isEmpanadaProduct(selectedProduct)) {
+      return currentEmpFlavorsCount === totalEmpanadaLimit;
+    }
+
+    const groups = availableAddons.reduce((acc, a) => {
+      const cat = a.category || 'General';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(a);
+      return acc;
+    }, {});
+
+    return unitsData.every((unit) => {
+      return Object.entries(groups).every(([groupName, groupItems]) => {
+        const lowerName = groupName.toLowerCase();
+        const selectedInGroup = groupItems.reduce((sum, item) => sum + (unit.flavorQuantities[item.id] || 0), 0);
+
+        const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa');
+        if (isOpcionalGroup) {
+          const maxLimit = selectedProduct.max_flavors || 0;
+          return maxLimit === 0 ? true : selectedInGroup <= maxLimit;
+        }
+
+        if (lowerName.includes('tipo de carne') || lowerName === 'carne' || lowerName === 'tipo') {
+          return selectedInGroup === 1;
+        }
+
+        const maxLimit = selectedProduct.max_flavors || 0;
+        if (maxLimit === 0) {
+          return selectedInGroup >= 1;
+        }
+
+        return selectedInGroup >= 1 && selectedInGroup <= maxLimit;
+      });
+    });
+  }, [selectedProduct, availableAddons, unitsData, isEmpanadaProduct, currentEmpFlavorsCount, totalEmpanadaLimit]);
 
   const calculateTotalPrice = useCallback(() => {
     if (!selectedProduct) return 0;
-    const base = Number(selectedProduct.price);
+    const base = Number(selectedProduct.price) || 0;
+
+    if (isEmpanadaProduct(selectedProduct)) {
+      const empAddonsCost = Object.entries(empFlavors).reduce((s, [addonId, qty]) => {
+        const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+        return s + (addon ? Number(addon.price) * qty : 0);
+      }, 0);
+
+      return base * productQuantity + empAddonsCost;
+    }
 
     const addonsTotal = unitsData.reduce((sum, unit) => {
       const unitAddons = unit.selectedAddons.reduce((s, a) => s + Number(a.price), 0);
-      return sum + unitAddons;
+      
+      const unitFlavorsCost = Object.entries(unit.flavorQuantities).reduce((s, [addonId, qty]) => {
+        const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+        return s + (addon ? Number(addon.price) * qty : 0);
+      }, 0);
+
+      return sum + unitAddons + unitFlavorsCost;
     }, 0);
 
     return base * productQuantity + addonsTotal;
-  }, [selectedProduct, unitsData, productQuantity]);
+  }, [selectedProduct, unitsData, productQuantity, availableAddons, allAddonsMap, isEmpanadaProduct, empFlavors]);
 
   const handleConfirmAddToCart = () => {
-    if (!isOpenNow) {
-      setShowClosedModal(true);
-      return;
-    }
-
     if (!selectedProduct || !isAllUnitsValid()) return;
 
     const totalPrice = calculateTotalPrice();
+    let formattedUnits = [];
 
-    const formattedUnits = unitsData.map((unit) => {
-      const flavorsList = Object.entries(unit.flavorQuantities).map(([addonId, qty]) => {
+    if (isEmpanadaProduct(selectedProduct)) {
+      const flavorsList = Object.entries(empFlavors).map(([addonId, qty]) => {
         const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
         return { name: addon ? addon.name : '', qty };
       });
+      formattedUnits = [{ flavors: flavorsList, addons: [] }];
+    } else {
+      formattedUnits = unitsData.map((unit) => {
+        const flavorsList = Object.entries(unit.flavorQuantities).map(([addonId, qty]) => {
+          const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+          return { name: addon ? addon.name : '', qty };
+        });
 
-      return {
-        flavors: flavorsList,
-        addons: unit.selectedAddons
-      };
-    });
+        return {
+          flavors: flavorsList,
+          addons: unit.selectedAddons
+        };
+      });
+    }
 
-    const cartItemId = `${selectedProduct.id}-${JSON.stringify(unitsData)}-${itemNotes.trim()}`;
+    const cartItemId = `${selectedProduct.id}-${JSON.stringify(isEmpanadaProduct(selectedProduct) ? empFlavors : unitsData)}-${itemNotes.trim()}`;
 
     const cartItem = {
       cartItemId,
       id: selectedProduct.id,
       name: selectedProduct.name,
-      basePrice: Number(selectedProduct.price),
+      basePrice: Number(selectedProduct.price) || 0,
       price: totalPrice / productQuantity,
       totalPrice: totalPrice,
       quantity: productQuantity,
@@ -350,14 +447,9 @@ export default function MenuPage() {
 
   const sendWhatsAppOrder = (e) => {
     e.preventDefault();
-    if (!isOpenNow) {
-      setShowClosedModal(true);
-      return;
-    }
-
     if (cart.length === 0 || !customerName) return;
 
-    let text = `*NUEVO PEDIDO - IL CAPO*\n`;
+    let text = `*NUEVO PEDIDO - COMO EN CASA*\n`;
     text += `---------------------------------\n`;
     text += `👤 *Cliente:* ${customerName}\n`;
     text += `🛵 *Tipo:* ${orderType}\n`;
@@ -379,11 +471,11 @@ export default function MenuPage() {
         }
         if (u.addons && u.addons.length > 0) {
           const aStr = u.addons.map((a) => a.name).join(', ');
-          parts.push(`Extras: ${aStr}`);
+          parts.push(`Adicionales: ${aStr}`);
         }
 
         if (parts.length > 0) {
-          text += `   ↳ [Unidad ${i + 1}] ${parts.join(' | ')}\n`;
+          text += `   ↳ ${parts.join(' | ')}\n`;
         }
       });
 
@@ -399,80 +491,91 @@ export default function MenuPage() {
     window.open(`https://wa.me/${PHONE_NUMBER}?text=${encodedText}`, '_blank');
   };
 
+  const modalGroupedAddons = useMemo(() => {
+    return availableAddons.reduce((acc, addon) => {
+      const cat = addon.category?.trim() || 'General';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(addon);
+      return acc;
+    }, {});
+  }, [availableAddons]);
+
   return (
-    <div className="min-h-screen bg-black text-neutral-100 pb-28 font-sans selection:bg-amber-400 selection:text-black">
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-28 font-sans selection:bg-red-600 selection:text-white">
       
       {/* HEADER PRINCIPAL */}
-      <header className="relative w-full h-72 md:h-80 flex items-center justify-center text-center overflow-hidden border-b border-neutral-800 shadow-2xl">
+      <header className="relative w-full h-72 md:h-80 flex items-center justify-center text-center overflow-hidden border-b border-red-200 shadow-lg">
         <div
           className="absolute inset-0 bg-cover bg-center transition-transform duration-1000 scale-105"
-          style={{ backgroundImage: `url('/il-capo.jpg')` }}
+          style={{ backgroundImage: `url('/encabezado.jpg')` }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/60 backdrop-blur-[2px]" />
+        <div className="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-white/50 backdrop-blur-[1px]" />
         
         <div className="relative z-10 px-4 max-w-xl mx-auto flex flex-col items-center">
-          <span className="text-[10px] md:text-xs font-extrabold tracking-[0.25em] text-amber-400 uppercase bg-neutral-900/90 px-4 py-1 rounded-full border border-amber-400/30 mb-3 backdrop-blur-md shadow-lg">
-            Sandwichería
+          <span className="text-[10px] md:text-xs font-extrabold tracking-[0.2em] text-red-700 uppercase bg-red-100/90 px-4 py-1 rounded-full border border-red-300 mb-3 backdrop-blur-md shadow-sm">
+            Comida Casera
           </span>
 
           <div className="flex items-center justify-center gap-3">
             <img
-              src="/logo.jpeg"
-              alt="Logo Il Capo"
-              className="h-12 w-12 md:h-16 md:w-16 object-cover rounded-xl shadow-lg border border-amber-400/30 flex-shrink-0"
+              src="/logo.jpg"
+              alt="Logo Como en Casa"
+              className="h-12 w-12 md:h-16 md:w-16 object-cover rounded-2xl shadow-md border-2 border-red-600 flex-shrink-0"
             />
-            <h1 className="text-4xl md:text-6xl font-black tracking-widest text-white uppercase drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] leading-none">
-              IL CAPO
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight text-red-700 uppercase drop-shadow-sm leading-none">
+              Como en casa
             </h1>
           </div>
 
-          <p className="text-xs md:text-sm text-neutral-300 font-medium tracking-wide mt-2 drop-shadow-md">
-            Sánguches • Pizzas • Empanadas
+          <p className="text-xs md:text-sm text-slate-700 font-semibold tracking-wide mt-2">
+            Simplificamos tu vida cocinándote
           </p>
         </div>
       </header>
 
-      {/* HORARIOS Y UBICACIÓN */}
+      {/* HORARIOS Y UBICACIÓN CON ESTADO ABIERTO/CERRADO REAL */}
       <section className="max-w-6xl mx-auto px-4 -mt-6 relative z-10">
-        <div className="bg-neutral-900/95 border border-neutral-800 rounded-2xl p-4 shadow-2xl backdrop-blur-md grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           
           <div className="w-full">
             <button
               onClick={() => setIsHoursOpen(!isHoursOpen)}
-              className="w-full flex items-center justify-between gap-2 text-xs font-medium text-neutral-200 hover:text-white transition-colors bg-neutral-950/80 p-3 rounded-xl border border-neutral-800"
+              className="w-full flex items-center justify-between gap-2 text-xs font-medium text-slate-700 hover:text-slate-900 transition-colors bg-slate-50 p-3 rounded-xl border border-slate-200"
             >
               <div className="flex items-center gap-2 text-left">
                 <span className="text-base">🕒</span>
                 <div>
                   <div className="flex items-center gap-2">
-                    <strong className="text-neutral-100">Horarios</strong>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        isOpenNow
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : 'bg-red-500/15 text-red-400 border-red-500/30'
-                      }`}
-                    >
+                    <strong className="text-slate-900">Horarios</strong>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      isOpenNow
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                        : 'bg-red-100 text-red-700 border-red-300'
+                    }`}>
                       {isOpenNow ? 'Abierto' : 'Cerrado'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-neutral-400 mt-0.5">
-                    {isForcedClosed ? 'Local cerrado por feriado / reformas' : 'Hoy 12:00 a 15:15 y 20:00 a 23:15'}
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Mar a Sáb 11:30-14:30 / 19:30-22:30 hs
                   </p>
                 </div>
               </div>
-              <span className={`text-[10px] text-neutral-400 transition-transform duration-200 ${isHoursOpen ? 'rotate-180' : ''}`}>
+              <span className={`text-[10px] text-slate-500 transition-transform duration-200 ${isHoursOpen ? 'rotate-180' : ''}`}>
                 ▼
               </span>
             </button>
 
             {isHoursOpen && (
-              <div className="mt-2.5 p-2.5 bg-neutral-950/90 rounded-xl border border-neutral-800 grid gap-1.5 text-xs">
+              <div className="mt-2.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 grid gap-1.5 text-xs">
                 {schedule.map((item, index) => (
-                  <div key={index} className="flex justify-between items-center py-1 px-2 rounded-lg hover:bg-neutral-900">
-                    <span className="font-bold text-neutral-300 text-[11px]">{item.day}</span>
-                    <span className="text-neutral-400 font-mono text-[10px]">
-                      {item.open1} a {item.close1} y {item.open2} a {item.close2 === '23:59' ? '00:00' : item.close2}
+                  <div key={index} className="flex justify-between items-center py-1 px-2 rounded-lg hover:bg-slate-100">
+                    <span className="font-bold text-slate-800 text-[11px]">{item.day}</span>
+                    <span className="text-slate-600 font-mono text-[10px]">
+                      {item.closed
+                        ? 'Cerrado'
+                        : item.singleShift
+                        ? `${item.open1} a ${item.close1} hs`
+                        : `${item.open1} a ${item.close1} hs y ${item.open2} a ${item.close2} hs`}
                     </span>
                   </div>
                 ))}
@@ -482,23 +585,23 @@ export default function MenuPage() {
 
           <div className="w-full flex flex-col justify-between h-full">
             <div className="mb-2">
-              <p className="text-[11px] text-neutral-400 font-medium">Dónde estamos</p>
-              <h3 className="text-xs font-bold text-amber-400 flex items-center gap-1">📍 Av. Constitución 5716</h3>
+              <p className="text-[11px] text-slate-500 font-medium">Dónde estamos</p>
+              <h3 className="text-xs font-bold text-red-700 flex items-center gap-1">📍 Juan Angel Peña 3892, Mar del Plata</h3>
             </div>
-            <div className="relative w-full h-24 rounded-xl overflow-hidden border border-neutral-800 shadow-inner group">
+            <div className="relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 shadow-inner group">
               <iframe
-                title="Ubicación Il Capo"
-                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3145.4265147986065!2d-57.5612!3d-37.9658!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zMzc3NTknNTYuOSJTIDU3wrAzMyc0MC4zIlc!5e0!3m2!1ses!2sar!4v1680000000000!5m2!1ses!2sar"
-                className="w-full h-full border-0 grayscale opacity-75 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none"
+                title="Ubicación Como en casa"
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3145.4265147986065!2d-57.5512329!3d-37.9834715!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zMzc3NTknNTYuOSJTIDU3wrAzMyc0MC4zIlc!5e0!3m2!1ses!2sar!4v1680000000000!5m2!1ses!2sar"
+                className="w-full h-full border-0 grayscale group-hover:grayscale-0 transition-all duration-300 pointer-events-none"
                 loading="lazy"
               ></iframe>
               <a
-                href="https://maps.google.com/?q=Av.+Constituci%C3%B3n+5716"
+                href="https://maps.app.goo.gl/PLr6YzkZ1rh5wu8aA"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="absolute inset-0 bg-black/40 hover:bg-black/20 flex items-center justify-center transition-all"
+                className="absolute inset-0 bg-red-950/20 hover:bg-red-950/10 flex items-center justify-center transition-all"
               >
-                <span className="bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-[11px] px-3.5 py-1.5 rounded-lg shadow-lg flex items-center gap-1.5 scale-95 hover:scale-100 transition-all">
+                <span className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-[11px] px-3.5 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 scale-95 hover:scale-100 transition-all">
                   <span>📍</span>
                   <span>Abrir Maps</span>
                 </span>
@@ -508,9 +611,9 @@ export default function MenuPage() {
         </div>
       </section>
 
-      {/* PESTAÑAS DE CATEGORÍAS */}
-      <div className="sticky top-0 bg-black/95 backdrop-blur-md shadow-md z-10 py-3.5 border-b border-neutral-800/80 my-4 w-full">
-        <div className="flex space-x-2.5 w-full px-4 overflow-x-auto scrollbar-none justify-start md:justify-center max-w-6xl mx-auto">
+      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS */}
+      <div className="sticky top-0 bg-slate-50/95 backdrop-blur-md shadow-sm z-10 py-3.5 border-b border-slate-200 my-4 w-full">
+        <div className="flex space-x-2.5 w-full px-6 overflow-x-auto scrollbar-none justify-start md:justify-center items-center">
           {categories.map((cat) => {
             const isSelected = selectedCategory === cat.id;
             return (
@@ -519,8 +622,8 @@ export default function MenuPage() {
                 onClick={() => setSelectedCategory(cat.id)}
                 className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition-all whitespace-nowrap flex items-center gap-2 border flex-shrink-0 ${
                   isSelected
-                    ? 'bg-amber-400 text-black border-amber-400 shadow-lg shadow-amber-400/20 scale-105'
-                    : 'bg-neutral-900 text-neutral-300 border-neutral-800 hover:bg-neutral-850 hover:border-neutral-700'
+                    ? 'bg-red-600 text-white border-red-600 shadow-md shadow-red-600/20 scale-105'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                 }`}
               >
                 <span>{cat.icon || '🏷️'}</span>
@@ -535,274 +638,297 @@ export default function MenuPage() {
       <main className="max-w-6xl mx-auto px-4 mt-4">
         {loading ? (
           <div className="text-center py-16">
-            <div className="w-9 h-9 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-            <p className="text-xs text-neutral-400">Cargando menú delicioso...</p>
+            <div className="w-9 h-9 border-4 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+            <p className="text-xs text-slate-500">Cargando la mejor comida casera...</p>
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="text-center py-16 text-neutral-500 text-xs">No hay productos disponibles en esta categoría.</div>
+          <div className="text-center py-16 text-slate-400 text-xs">No hay platos disponibles en esta categoría.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProducts.map((product) => (
-              <div
-                key={product.id}
-                className="bg-neutral-900/90 border border-neutral-800 p-3.5 rounded-2xl shadow-md flex gap-3 hover:border-neutral-700 transition-all items-center justify-between"
-              >
-                <img
-                  src={product.image_url}
-                  alt={product.name}
-                  loading="lazy"
-                  className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-xl bg-neutral-950 flex-shrink-0 shadow-inner"
-                />
-                <div className="flex flex-col justify-between flex-1 ml-3 min-w-0 h-full">
-                  <div>
-                    <h3 className="font-bold text-neutral-100 text-sm leading-snug truncate">{product.name}</h3>
-                    <p className="text-xs text-neutral-400 line-clamp-2 mt-1 leading-relaxed">{product.description}</p>
-                  </div>
-                  <div className="flex justify-between items-center mt-3 gap-2">
-                    <span className="font-extrabold text-sm md:text-base text-amber-400 flex-shrink-0">
-                      ${Number(product.price).toLocaleString()}
-                    </span>
-                    <button
-                      onClick={() => openProductModal(product)}
-                      className={`text-xs px-3.5 py-1.5 rounded-xl font-extrabold transition-all shadow-md flex-shrink-0 ${
-                        isOpenNow
-                          ? 'bg-amber-400 hover:bg-amber-300 active:scale-95 text-black shadow-amber-400/10'
-                          : 'bg-neutral-800 text-neutral-500 hover:bg-red-950/40 hover:text-red-400 border border-neutral-700/50'
-                      }`}
-                    >
-                      + Agregar
-                    </button>
+            {filteredProducts.map((product) => {
+              const priceNum = Number(product.price) || 0;
+              const hasPrice = priceNum > 0;
+
+              return (
+                <div
+                  key={product.id}
+                  className="bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm flex gap-3 hover:border-red-300 transition-all items-center justify-between"
+                >
+                  <img
+                    src={product.image_url}
+                    alt={product.name}
+                    loading="lazy"
+                    className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-xl bg-slate-100 flex-shrink-0 shadow-inner"
+                  />
+                  <div className="flex flex-col justify-between flex-1 ml-3 min-w-0 h-full">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm leading-snug truncate">{product.name}</h3>
+                      <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">{product.description}</p>
+                    </div>
+                    <div className="flex justify-between items-center mt-3 gap-2">
+                      {hasPrice ? (
+                        <span className="font-extrabold text-sm md:text-base text-red-600 flex-shrink-0">
+                          ${priceNum.toLocaleString()}
+                        </span>
+                      ) : (
+                        <div />
+                      )}
+                      <button
+                        onClick={() => openProductModal(product)}
+                        className="text-xs px-3.5 py-1.5 rounded-xl font-extrabold transition-all shadow-sm flex-shrink-0 bg-red-600 hover:bg-red-700 active:scale-95 text-white ml-auto"
+                      >
+                        + Agregar
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
 
-      {/* MODAL / CARTEL DE LOCAL CERRADO */}
-      {showClosedModal && (
-        <div className="fixed inset-0 bg-black/85 z-50 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl space-y-4">
-            <div className="w-14 h-14 bg-red-500/10 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto text-2xl">
-              🚫
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-white">Local Cerrado</h3>
-              <p className="text-xs text-neutral-400 mt-2 leading-relaxed">
-                {isForcedClosed
-                  ? 'Actualmente el local se encuentra cerrado temporalmente por feriado, vacaciones o reformas.'
-                  : 'En este momento no estamos tomando pedidos. Por favor consultá nuestros horarios de atención.'}
-              </p>
-            </div>
-            <button
-              onClick={() => setShowClosedModal(false)}
-              className="w-full bg-amber-400 hover:bg-amber-300 text-black font-extrabold py-3 rounded-2xl text-xs transition-all shadow-lg shadow-amber-400/10"
-            >
-              Entendido
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* MODAL DE PERSONALIZACIÓN */}
       {selectedProduct && (
-        <div className="fixed inset-0 bg-black/85 z-40 backdrop-blur-sm flex justify-end flex-col animate-fadeIn">
-          <div className="bg-neutral-900 border-t border-neutral-800 rounded-t-3xl p-5 max-w-md mx-auto w-full max-h-[92vh] overflow-y-auto text-neutral-100 flex flex-col justify-between">
+        <div className="fixed inset-0 bg-slate-900/60 z-40 backdrop-blur-sm flex justify-end flex-col animate-fadeIn">
+          <div className="bg-white border-t border-slate-200 rounded-t-3xl p-5 max-w-md mx-auto w-full max-h-[92vh] overflow-y-auto text-slate-800 flex flex-col justify-between shadow-2xl">
             <div>
-              <div className="flex justify-between items-start pb-3 border-b border-neutral-800">
+              <div className="flex justify-between items-start pb-3 border-b border-slate-200">
                 <div className="flex gap-3 items-center">
                   <img
                     src={selectedProduct.image_url}
                     alt={selectedProduct.name}
-                    className="w-14 h-14 object-cover rounded-xl border border-neutral-800"
+                    className="w-14 h-14 object-cover rounded-xl border border-slate-200"
                   />
                   <div>
-                    <h3 className="font-black text-amber-400 text-base leading-snug">{selectedProduct.name}</h3>
-                    <p className="text-xs font-bold text-neutral-300 mt-0.5">${Number(selectedProduct.price).toLocaleString()}</p>
+                    <h3 className="font-black text-red-700 text-base leading-snug">{selectedProduct.name}</h3>
+                    {Number(selectedProduct.price) > 0 && (
+                      <p className="text-xs font-bold text-slate-600 mt-0.5">${Number(selectedProduct.price).toLocaleString()}</p>
+                    )}
                   </div>
                 </div>
-                <button onClick={() => setSelectedProduct(null)} className="text-neutral-400 hover:text-white font-bold text-xl px-2">
+                <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-800 font-bold text-xl px-2">
                   ✕
                 </button>
               </div>
 
-              <p className="text-xs text-neutral-400 mt-3 leading-relaxed">{selectedProduct.description}</p>
+              <p className="text-xs text-slate-500 mt-3 leading-relaxed">{selectedProduct.description}</p>
 
-              {/* UNIDADES DESPLEGABLES */}
-              <div className="mt-5 space-y-3">
-                {unitsData.map((unit, unitIdx) => {
-                  const isOpen = openUnitIndex === unitIdx;
-                  const unitFlavorsTotal = getUnitFlavorsTotal(unit);
-                  const maxFlavors = selectedProduct.max_flavors || 0;
-                  const isFlavorMode = selectedProduct.allows_flavor_selection;
-                  const isUnitComplete = !isFlavorMode || unitFlavorsTotal === maxFlavors;
+              {/* VISTA PARA EMPANADAS (ACUMULABLE UNIFICADO) */}
+              {isEmpanadaProduct(selectedProduct) ? (
+                <div className="mt-5 space-y-3">
+                  {Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => (
+                    <div key={groupName} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                          Elegí tus gustos ({currentEmpFlavorsCount} / {totalEmpanadaLimit})
+                        </span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                          currentEmpFlavorsCount === totalEmpanadaLimit
+                            ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                            : 'bg-red-100 text-red-700 border-red-300'
+                        }`}>
+                          {currentEmpFlavorsCount === totalEmpanadaLimit
+                            ? 'Completo'
+                            : `Faltan ${totalEmpanadaLimit - currentEmpFlavorsCount}`}
+                        </span>
+                      </div>
 
-                  return (
-                    <div
-                      key={unitIdx}
-                      className="bg-neutral-950/80 border border-neutral-800 rounded-2xl overflow-hidden transition-all shadow-md"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setOpenUnitIndex(isOpen ? -1 : unitIdx)}
-                        className="w-full flex items-center justify-between p-3 bg-neutral-950 hover:bg-neutral-900 transition-colors text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-extrabold text-amber-400">
-                            {productQuantity > 1 ? `Unidad #${unitIdx + 1}` : 'Personalización'}
-                          </span>
-
-                          {isFlavorMode && (
-                            <span
-                              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
-                                isUnitComplete
-                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-amber-400/15 text-amber-300 border-amber-400/30'
+                      <div className="grid gap-1.5 pt-1">
+                        {groupItems.map((addon) => {
+                          const qty = empFlavors[addon.id] || 0;
+                          return (
+                            <div
+                              key={addon.id}
+                              className={`flex justify-between items-center p-2 rounded-lg border text-xs font-semibold transition-all ${
+                                qty > 0
+                                  ? 'bg-red-50 border-red-300 text-red-900'
+                                  : 'bg-white border-slate-200 text-slate-700'
                               }`}
                             >
-                              {unitFlavorsTotal} / {maxFlavors}
-                            </span>
-                          )}
-                        </div>
-
-                        <span className={`text-xs text-neutral-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
-                          ▼
-                        </span>
-                      </button>
-
-                      {isOpen && (
-                        <div className="p-3 border-t border-neutral-800 bg-neutral-900/60 space-y-3">
-                          {isFlavorMode ? (
-                            <div>
-                              <p className="text-[11px] font-semibold text-neutral-400 mb-2">
-                                {selectedProduct.allow_flavor_repetition
-                                  ? 'Seleccioná los gustos para esta unidad:'
-                                  : 'Seleccioná los ingredientes para esta unidad:'}
-                              </p>
-
-                              {availableAddons.length === 0 ? (
-                                <p className="text-xs text-neutral-500 italic py-1">Sin opciones disponibles.</p>
-                              ) : (
-                                <div className="grid gap-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
-                                  {availableAddons.map((addon) => {
-                                    const qty = unit.flavorQuantities[addon.id] || 0;
-                                    const allowRep = selectedProduct.allow_flavor_repetition ?? true;
-                                    const isPlusDisabled = unitFlavorsTotal >= maxFlavors || (!allowRep && qty >= 1);
-
-                                    return (
-                                      <div
-                                        key={addon.id}
-                                        className={`flex justify-between items-center p-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                                          qty > 0
-                                            ? 'bg-amber-400/10 border-amber-400/80 text-amber-200'
-                                            : 'bg-neutral-900 border-neutral-800 text-neutral-300'
-                                        }`}
-                                      >
-                                        <span>{addon.name}</span>
-                                        <div className="flex items-center gap-2 bg-black rounded-lg px-2 py-1 border border-neutral-800">
-                                          <button
-                                            type="button"
-                                            onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, -1)}
-                                            disabled={qty === 0}
-                                            className="font-black text-amber-400 disabled:opacity-30 text-sm px-1"
-                                          >
-                                            -
-                                          </button>
-                                          <span className="text-xs font-bold w-4 text-center">{qty}</span>
-                                          <button
-                                            type="button"
-                                            onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, 1)}
-                                            disabled={isPlusDisabled}
-                                            className="font-black text-amber-400 disabled:opacity-30 text-sm px-1"
-                                          >
-                                            +
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                              <div>
+                                <span>{addon.name}</span>
+                                {addon.price > 0 && (
+                                  <span className="text-[10px] text-red-600 font-bold ml-1">
+                                    (+${Number(addon.price).toLocaleString()})
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => updateEmpanadaFlavorQuantity(addon.id, -1)}
+                                  disabled={qty === 0}
+                                  className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                >
+                                  -
+                                </button>
+                                <span className="text-xs font-bold w-4 text-center">{qty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateEmpanadaFlavorQuantity(addon.id, 1)}
+                                  disabled={currentEmpFlavorsCount >= totalEmpanadaLimit}
+                                  className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </div>
-                          ) : (
-                            <div>
-                              <p className="text-[11px] font-semibold text-neutral-400 mb-2">
-                                Adicionales para esta unidad:
-                              </p>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* VISTA PARA OTROS PLATOS (DESGLOSADO POR UNIDAD) */
+                <div className="mt-5 space-y-3">
+                  {unitsData.map((unit, unitIdx) => {
+                    const isOpen = openUnitIndex === unitIdx;
+                    const isFlavorMode = selectedProduct.allows_flavor_selection;
 
-                              {availableAddons.length === 0 ? (
-                                <p className="text-xs text-neutral-500 italic py-1">Sin adicionales para este producto.</p>
-                              ) : (
-                                <div className="grid gap-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
-                                  {availableAddons.map((addon) => {
-                                    const isSelected = unit.selectedAddons.some((a) => a.id === addon.id);
-                                    return (
-                                      <button
-                                        key={addon.id}
-                                        type="button"
-                                        onClick={() => toggleAddonForUnit(unitIdx, addon)}
-                                        className={`flex justify-between items-center p-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                                          isSelected
-                                            ? 'bg-amber-400/10 border-amber-400 text-amber-300'
-                                            : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850'
-                                        }`}
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <span
-                                            className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
-                                              isSelected ? 'bg-amber-400 border-amber-400 text-black font-black' : 'border-neutral-600'
+                    return (
+                      <div
+                        key={unitIdx}
+                        className="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden transition-all shadow-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setOpenUnitIndex(isOpen ? -1 : unitIdx)}
+                          className="w-full flex items-center justify-between p-3 bg-slate-100/70 hover:bg-slate-200/60 transition-colors text-left"
+                        >
+                          <span className="text-xs font-extrabold text-red-700">
+                            {productQuantity > 1 ? `Unidad #${unitIdx + 1}` : 'Personalización de plato'}
+                          </span>
+
+                          <span className={`text-xs text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+                            ▼
+                          </span>
+                        </button>
+
+                        {isOpen && (
+                          <div className="p-3 border-t border-slate-200 bg-white space-y-4">
+                            {isFlavorMode && Object.keys(modalGroupedAddons).length > 0 ? (
+                              Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => {
+                                const lowerGroup = groupName.toLowerCase();
+                                const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa');
+                                const isCarneGroup = lowerGroup.includes('tipo de carne') || lowerGroup === 'carne' || lowerGroup === 'tipo';
+                                
+                                const selectedInGroup = groupItems.reduce((s, item) => s + (unit.flavorQuantities[item.id] || 0), 0);
+                                const maxLimit = selectedProduct.max_flavors || 0;
+
+                                let isGroupComplete = false;
+                                if (isGuarnicionOSalsa) {
+                                  isGroupComplete = maxLimit === 0 || selectedInGroup <= maxLimit;
+                                } else if (isCarneGroup) {
+                                  isGroupComplete = selectedInGroup === 1;
+                                } else {
+                                  isGroupComplete = maxLimit === 0 ? selectedInGroup >= 1 : (selectedInGroup >= 1 && selectedInGroup <= maxLimit);
+                                }
+
+                                return (
+                                  <div key={groupName} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                                    <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                                      <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                                        {groupName} {!isGuarnicionOSalsa && <span className="text-red-600">*</span>}
+                                      </span>
+                                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                                        isGroupComplete
+                                          ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                          : 'bg-red-100 text-red-700 border-red-300'
+                                      }`}>
+                                        {isGuarnicionOSalsa
+                                          ? selectedInGroup === 0 ? 'Opcional' : `${selectedInGroup} elegido`
+                                          : isCarneGroup
+                                          ? selectedInGroup === 1 ? 'Elegido' : 'Obligatorio (1)'
+                                          : selectedInGroup >= 1 ? `${selectedInGroup} elegido` : 'Obligatorio (mínimo 1)'}
+                                      </span>
+                                    </div>
+
+                                    <div className="grid gap-1.5 pt-1">
+                                      {groupItems.map((addon) => {
+                                        const qty = unit.flavorQuantities[addon.id] || 0;
+                                        return (
+                                          <div
+                                            key={addon.id}
+                                            className={`flex justify-between items-center p-2 rounded-lg border text-xs font-semibold transition-all ${
+                                              qty > 0
+                                                ? 'bg-red-50 border-red-300 text-red-900'
+                                                : 'bg-white border-slate-200 text-slate-700'
                                             }`}
                                           >
-                                            {isSelected ? '✓' : ''}
-                                          </span>
-                                          <span>{addon.name}</span>
-                                        </div>
-                                        <span className="font-bold text-amber-400">
-                                          {addon.price > 0 ? `+$${Number(addon.price).toLocaleString()}` : 'Sin costo'}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                                            <div>
+                                              <span>{addon.name}</span>
+                                              {addon.price > 0 && (
+                                                <span className="text-[10px] text-red-600 font-bold ml-1">
+                                                  (+${Number(addon.price).toLocaleString()})
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                                              <button
+                                                type="button"
+                                                onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, -1)}
+                                                disabled={qty === 0}
+                                                className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                              >
+                                                -
+                                              </button>
+                                              <span className="text-xs font-bold w-4 text-center">{qty}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, 1)}
+                                                className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                              >
+                                                +
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">Sin personalizaciones obligatorias.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Aclaraciones */}
               <div className="mt-5">
-                <label className="text-xs font-extrabold uppercase tracking-wider text-neutral-400 block mb-1.5">
+                <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500 block mb-1.5">
                   Aclaraciones para el pedido
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: Sin aderezo, bien fría..."
+                  placeholder="Ej: Sin sal, la ensalada bien condimentada..."
                   value={itemNotes}
                   onChange={(e) => setItemNotes(e.target.value)}
-                  className="w-full p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-xs outline-none focus:border-amber-400 text-neutral-100"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-red-600 text-slate-800"
                 />
               </div>
             </div>
 
             {/* Controles de Cantidad */}
-            <div className="pt-5 border-t border-neutral-800 mt-5 flex gap-3 items-center">
-              <div className="flex items-center space-x-2 bg-neutral-950 rounded-xl px-3 py-2 border border-neutral-800">
+            <div className="pt-5 border-t border-slate-200 mt-5 flex gap-3 items-center">
+              <div className="flex items-center space-x-2 bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
                 <button
                   onClick={() => handleQuantityChange(productQuantity - 1)}
-                  className="font-black text-amber-400 hover:text-amber-300 px-1 text-base"
+                  className="font-black text-red-600 hover:text-red-700 px-1 text-base"
                 >
                   -
                 </button>
-                <span className="text-xs font-bold w-5 text-center text-neutral-100">{productQuantity}</span>
+                <span className="text-xs font-bold w-5 text-center text-slate-900">{productQuantity}</span>
                 <button
                   onClick={() => handleQuantityChange(productQuantity + 1)}
-                  className="font-black text-amber-400 hover:text-amber-300 px-1 text-base"
+                  className="font-black text-red-600 hover:text-red-700 px-1 text-base"
                 >
                   +
                 </button>
@@ -811,14 +937,18 @@ export default function MenuPage() {
               <button
                 onClick={handleConfirmAddToCart}
                 disabled={!isAllUnitsValid()}
-                className={`flex-1 font-black py-3 px-4 rounded-xl shadow-lg text-xs flex justify-between items-center transition-all ${
+                className={`flex-1 font-black py-3 px-4 rounded-xl shadow-md text-xs flex justify-between items-center transition-all ${
                   isAllUnitsValid()
-                    ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-amber-400/20 active:scale-98'
-                    : 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-60'
+                    ? 'bg-red-600 hover:bg-red-700 text-white active:scale-98'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-60'
                 }`}
               >
                 <span>
-                  {!isAllUnitsValid() ? 'Completá todas las unidades' : 'Agregar al Pedido'}
+                  {!isAllUnitsValid()
+                    ? isEmpanadaProduct(selectedProduct)
+                      ? `Completá las ${totalEmpanadaLimit} empanadas`
+                      : 'Seleccioná la opción obligatoria'
+                    : 'Agregar al Pedido'}
                 </span>
                 <span>${calculateTotalPrice().toLocaleString()}</span>
               </button>
@@ -832,9 +962,9 @@ export default function MenuPage() {
         <div className="fixed bottom-5 left-0 right-0 px-4 z-20 max-w-md mx-auto">
           <button
             onClick={() => setIsCartOpen(true)}
-            className="w-full bg-amber-400 hover:bg-amber-300 text-black py-3.5 px-6 rounded-2xl shadow-xl shadow-amber-400/10 flex justify-between items-center font-black text-sm transition-transform active:scale-95"
+            className="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 px-6 rounded-2xl shadow-xl shadow-red-600/20 flex justify-between items-center font-black text-sm transition-transform active:scale-95"
           >
-            <span className="bg-black text-amber-400 px-2.5 py-1 rounded-lg text-xs font-black">
+            <span className="bg-white text-red-600 px-2.5 py-1 rounded-lg text-xs font-black">
               {cart.reduce((a, b) => a + b.quantity, 0)} ítems
             </span>
             <span>Ver Mi Pedido</span>
@@ -845,20 +975,20 @@ export default function MenuPage() {
 
       {/* MODAL / CARRITO DE COMPRAS */}
       {isCartOpen && (
-        <div className="fixed inset-0 bg-black/85 z-50 backdrop-blur-md flex justify-end flex-col animate-fadeIn">
-          <div className="bg-neutral-900 border-t border-neutral-800 rounded-t-3xl p-6 max-w-md mx-auto w-full max-h-[88vh] overflow-y-auto text-neutral-100">
-            <div className="flex justify-between items-center pb-4 border-b border-neutral-800">
-              <h2 className="text-lg font-black text-amber-400">Tu Pedido</h2>
-              <button onClick={() => setIsCartOpen(false)} className="text-neutral-400 hover:text-white font-bold text-xl px-2">
+        <div className="fixed inset-0 bg-slate-900/60 z-50 backdrop-blur-md flex justify-end flex-col animate-fadeIn">
+          <div className="bg-white border-t border-slate-200 rounded-t-3xl p-6 max-w-md mx-auto w-full max-h-[88vh] overflow-y-auto text-slate-800 shadow-2xl">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+              <h2 className="text-lg font-black text-red-700">Tu Pedido</h2>
+              <button onClick={() => setIsCartOpen(false)} className="text-slate-400 hover:text-slate-800 font-bold text-xl px-2">
                 ✕
               </button>
             </div>
 
-            <div className="py-4 divide-y divide-neutral-800">
+            <div className="py-4 divide-y divide-slate-100">
               {cart.map((item) => (
                 <div key={item.cartItemId} className="flex justify-between items-start py-3">
                   <div className="pr-2">
-                    <p className="font-bold text-sm text-neutral-200">{item.name}</p>
+                    <p className="font-bold text-sm text-slate-900">{item.name}</p>
 
                     {item.units &&
                       item.units.map((u, i) => {
@@ -867,31 +997,30 @@ export default function MenuPage() {
                         if (!hasFlavors && !hasAddons) return null;
 
                         return (
-                          <div key={i} className="text-[11px] text-amber-300 font-medium mt-0.5">
-                            ↳ Unidad #{i + 1}:{' '}
-                            {hasFlavors && u.flavors.map((f) => (f.qty > 1 ? `${f.qty}x ${f.name}` : f.name)).join(', ')}
+                          <div key={i} className="text-[11px] text-red-600 font-medium mt-0.5">
+                            ↳ {hasFlavors && u.flavors.map((f) => (f.qty > 1 ? `${f.qty}x ${f.name}` : f.name)).join(', ')}
                             {hasFlavors && hasAddons ? ' | Extras: ' : ''}
                             {hasAddons && u.addons.map((a) => a.name).join(', ')}
                           </div>
                         );
                       })}
 
-                    {item.notes && <p className="text-[11px] text-neutral-400 italic mt-0.5">"{item.notes}"</p>}
-                    <p className="text-xs text-amber-400 font-semibold mt-1">
+                    {item.notes && <p className="text-[11px] text-slate-400 italic mt-0.5">"{item.notes}"</p>}
+                    <p className="text-xs text-red-600 font-bold mt-1">
                       ${item.totalPrice.toLocaleString()}
                     </p>
                   </div>
-                  <div className="flex items-center space-x-2 bg-neutral-950 rounded-xl px-2.5 py-1 border border-neutral-800 flex-shrink-0">
+                  <div className="flex items-center space-x-2 bg-slate-100 rounded-xl px-2.5 py-1 border border-slate-200 flex-shrink-0">
                     <button
                       onClick={() => updateQuantityInCart(item.cartItemId, -1)}
-                      className="font-black text-amber-400 hover:text-amber-300 px-1 text-sm"
+                      className="font-black text-red-600 hover:text-red-700 px-1 text-sm"
                     >
                       -
                     </button>
-                    <span className="text-xs font-bold w-4 text-center text-neutral-100">{item.quantity}</span>
+                    <span className="text-xs font-bold w-4 text-center text-slate-800">{item.quantity}</span>
                     <button
                       onClick={() => updateQuantityInCart(item.cartItemId, 1)}
-                      className="font-black text-amber-400 hover:text-amber-300 px-1 text-sm"
+                      className="font-black text-red-600 hover:text-red-700 px-1 text-sm"
                     >
                       +
                     </button>
@@ -902,14 +1031,14 @@ export default function MenuPage() {
 
             <form onSubmit={sendWhatsAppOrder} className="space-y-3.5 pt-2">
               <div>
-                <label className="text-xs font-semibold text-neutral-400 block mb-1">Tu Nombre *</label>
+                <label className="text-xs font-semibold text-slate-500 block mb-1">Tu Nombre *</label>
                 <input
                   type="text"
                   required
                   placeholder="Ej: Juan Pérez"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-sm outline-none focus:border-amber-400 text-neutral-100"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
                 />
               </div>
 
@@ -919,8 +1048,8 @@ export default function MenuPage() {
                   onClick={() => setOrderType('Delivery')}
                   className={`flex-1 py-2.5 text-xs font-extrabold rounded-xl border transition-all ${
                     orderType === 'Delivery'
-                      ? 'bg-amber-400 text-black border-amber-400'
-                      : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                      ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
                   }`}
                 >
                   🛵 Delivery
@@ -930,8 +1059,8 @@ export default function MenuPage() {
                   onClick={() => setOrderType('Retiro')}
                   className={`flex-1 py-2.5 text-xs font-extrabold rounded-xl border transition-all ${
                     orderType === 'Retiro'
-                      ? 'bg-amber-400 text-black border-amber-400'
-                      : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                      ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
                   }`}
                 >
                   🛍️ Retiro en local
@@ -940,24 +1069,24 @@ export default function MenuPage() {
 
               {orderType === 'Delivery' && (
                 <div>
-                  <label className="text-xs font-semibold text-neutral-400 block mb-1">Dirección de Envío *</label>
+                  <label className="text-xs font-semibold text-slate-500 block mb-1">Dirección de Envío *</label>
                   <input
                     type="text"
                     required
                     placeholder="Calle, Número y Piso"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    className="w-full p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-sm outline-none focus:border-amber-400 text-neutral-100"
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
                   />
                 </div>
               )}
 
               <div>
-                <label className="text-xs font-semibold text-neutral-400 block mb-1">Forma de Pago</label>
+                <label className="text-xs font-semibold text-slate-500 block mb-1">Forma de Pago</label>
                 <select
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-sm outline-none focus:border-amber-400 text-neutral-100"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
                 >
                   <option value="Efectivo">Efectivo</option>
                   <option value="Transferencia / Mercado Pago">Transferencia / Mercado Pago</option>
@@ -966,7 +1095,7 @@ export default function MenuPage() {
 
               <button
                 type="submit"
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold py-3.5 rounded-2xl shadow-lg shadow-emerald-500/10 mt-4 text-sm flex items-center justify-center gap-2"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/20 mt-4 text-sm flex items-center justify-center gap-2"
               >
                 <span>Enviar Pedido por WhatsApp 📲</span>
               </button>

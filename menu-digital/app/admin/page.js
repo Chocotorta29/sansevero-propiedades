@@ -14,6 +14,7 @@ export default function AdminPage() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
   
   // Formulario Producto
   const [productEditingId, setProductEditingId] = useState(null);
@@ -27,7 +28,8 @@ export default function AdminPage() {
   
   // Gustos / Ingredientes
   const [allowsFlavorSelection, setAllowsFlavorSelection] = useState(false);
-  const [maxFlavors, setMaxFlavors] = useState(0);
+  const [maxFlavors, setMaxFlavors] = useState('1');
+  const [isUnlimited, setIsUnlimited] = useState(false);
   const [allowFlavorRepetition, setAllowFlavorRepetition] = useState(true);
 
   // Estados de Adicionales
@@ -39,6 +41,7 @@ export default function AdminPage() {
   const [addonPrice, setAddonPrice] = useState('');
   const [addonCategory, setAddonCategory] = useState('General');
   const [addonAvailable, setAddonAvailable] = useState(true);
+  const [selectedAddonGroupIds, setSelectedAddonGroupIds] = useState([]);
 
   useEffect(() => {
     fetchStoreConfig();
@@ -69,7 +72,6 @@ export default function AdminPage() {
     }
   };
 
-  // Subir imagen directa a Supabase Storage (bucket: 'menu-imagenes')
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -115,19 +117,22 @@ export default function AdminPage() {
     setLoadingProducts(false);
   }
 
+  // --- ACÁ ESTÁ LA SOLUCIÓN: AHORA PERMITE PRECIO 0 ---
   const handleProductSubmit = async (e) => {
     e.preventDefault();
-    if (!name || !price || !categoryId) return alert('Por favor completa los campos obligatorios');
+    if (!name || price === '' || price === null || price === undefined || !categoryId) {
+      return alert('Por favor completa los campos obligatorios');
+    }
 
     const productPayload = {
       name,
       description,
-      price: parseFloat(price),
+      price: parseFloat(price) || 0,
       category_id: categoryId,
       image_url: imageUrl || 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500',
       available: true,
       allows_flavor_selection: allowsFlavorSelection,
-      max_flavors: allowsFlavorSelection ? parseInt(maxFlavors) || 0 : 0,
+      max_flavors: allowsFlavorSelection ? (isUnlimited ? 0 : (parseInt(maxFlavors) || 1)) : 0,
       allow_flavor_repetition: allowsFlavorSelection ? allowFlavorRepetition : true
     };
 
@@ -163,11 +168,15 @@ export default function AdminPage() {
     setProductEditingId(prod.id);
     setName(prod.name);
     setDescription(prod.description || '');
-    setPrice(prod.price);
+    setPrice(prod.price ?? 0);
     setCategoryId(prod.category_id);
     setImageUrl(prod.image_url || '');
     setAllowsFlavorSelection(prod.allows_flavor_selection || false);
-    setMaxFlavors(prod.max_flavors || 0);
+    
+    const maxVal = prod.max_flavors ?? 0;
+    setIsUnlimited(maxVal === 0);
+    setMaxFlavors(maxVal === 0 ? '' : String(maxVal));
+
     setAllowFlavorRepetition(prod.allow_flavor_repetition ?? true);
 
     const { data } = await supabase
@@ -190,7 +199,8 @@ export default function AdminPage() {
     setImageUrl('');
     setSelectedAddonIds([]);
     setAllowsFlavorSelection(false);
-    setMaxFlavors(0);
+    setMaxFlavors('1');
+    setIsUnlimited(false);
     setAllowFlavorRepetition(true);
   };
 
@@ -210,6 +220,40 @@ export default function AdminPage() {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (!error) {
       setProducts(products.filter(p => p.id !== id));
+      setSelectedProductIds(prev => prev.filter(pId => pId !== id));
+    }
+  };
+
+  // --- SELECCIÓN Y BORRADO MASIVO DE PRODUCTOS ---
+  const toggleSelectProduct = (id) => {
+    setSelectedProductIds(prev => 
+      prev.includes(id) ? prev.filter(pId => pId !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllProducts = () => {
+    setSelectedProductIds(products.map(p => p.id));
+  };
+
+  const deselectAllProducts = () => {
+    setSelectedProductIds([]);
+  };
+
+  const deleteSelectedProducts = async () => {
+    if (selectedProductIds.length === 0) return;
+    if (!confirm(`¿Estás seguro de eliminar los ${selectedProductIds.length} productos seleccionados?`)) return;
+
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .in('id', selectedProductIds);
+
+    if (error) {
+      alert('Error al borrar productos: ' + error.message);
+    } else {
+      setProducts(products.filter(p => !selectedProductIds.includes(p.id)));
+      setSelectedProductIds([]);
+      alert('¡Productos eliminados correctamente!');
     }
   };
 
@@ -297,7 +341,43 @@ export default function AdminPage() {
   const deleteAddon = async (id) => {
     if (!confirm('¿Estás seguro de eliminar este adicional?')) return;
     const { error } = await supabase.from('addons').delete().eq('id', id);
-    if (!error) fetchAddonsData();
+    if (!error) {
+      fetchAddonsData();
+      setSelectedAddonGroupIds(prev => prev.filter(aId => aId !== id));
+    }
+  };
+
+  // --- SELECCIÓN Y BORRADO MASIVO DE ADICIONALES ---
+  const toggleSelectAddonGroup = (id) => {
+    setSelectedAddonGroupIds(prev =>
+      prev.includes(id) ? prev.filter(aId => aId !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllAddonsTab = () => {
+    setSelectedAddonGroupIds(addons.map(a => a.id));
+  };
+
+  const deselectAllAddonsTab = () => {
+    setSelectedAddonGroupIds([]);
+  };
+
+  const deleteSelectedAddons = async () => {
+    if (selectedAddonGroupIds.length === 0) return;
+    if (!confirm(`¿Estás seguro de eliminar los ${selectedAddonGroupIds.length} adicionales seleccionados?`)) return;
+
+    const { error } = await supabase
+      .from('addons')
+      .delete()
+      .in('id', selectedAddonGroupIds);
+
+    if (error) {
+      alert('Error al borrar adicionales: ' + error.message);
+    } else {
+      fetchAddonsData();
+      setSelectedAddonGroupIds([]);
+      alert('¡Adicionales eliminados correctamente!');
+    }
   };
 
   const resetAddonForm = () => {
@@ -316,7 +396,7 @@ export default function AdminPage() {
   }, {});
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 sm:p-6 text-gray-800">
+    <div className="min-h-screen bg-gray-100 p-4 sm:p-6 text-gray-800 pb-28">
       <div className="max-w-4xl mx-auto space-y-6">
         
         {/* HEADER DE ADMINISTRACIÓN */}
@@ -398,7 +478,7 @@ export default function AdminPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Docena de Empanadas, Ensalada Chica"
+                    placeholder="Ej: Milanesa sola, Bacon Burger"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-sm outline-none focus:border-slate-900"
@@ -409,8 +489,9 @@ export default function AdminPage() {
                   <label className="text-xs font-semibold text-gray-600 block mb-1">Precio ($) *</label>
                   <input
                     type="number"
+                    min="0"
                     required
-                    placeholder="Ej: 4500"
+                    placeholder="Ej: 12000 (O 0 para ítems con precios por variedad)"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-sm outline-none focus:border-slate-900"
@@ -430,7 +511,6 @@ export default function AdminPage() {
                   </select>
                 </div>
 
-                {/* SUBIDA DIRECTA DE FOTO */}
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block mb-1">
                     Imagen del Producto (Subir foto o poner URL)
@@ -457,7 +537,7 @@ export default function AdminPage() {
                 <div className="md:col-span-2">
                   <label className="text-xs font-semibold text-gray-600 block mb-1">Descripción</label>
                   <textarea
-                    placeholder="Detalles del combo o plato..."
+                    placeholder="Detalles del plato..."
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     rows={2}
@@ -474,24 +554,45 @@ export default function AdminPage() {
                       onChange={(e) => setAllowsFlavorSelection(e.target.checked)}
                       className="w-4 h-4 accent-amber-600 rounded"
                     />
-                    <span>🥟 ¿Este producto requiere seleccionar Gustos / Ingredientes?</span>
+                    <span>🥟 ¿Este producto requiere seleccionar Opciones / Carne / Guarnición / Gustos?</span>
                   </label>
 
                   {allowsFlavorSelection && (
                     <div className="pt-2 border-t border-amber-200/80 space-y-3">
                       <div>
-                        <label className="text-xs font-bold text-amber-900 block mb-1">
-                          Cantidad máxima de ítems a elegir (Ej: 12 para Docena, 3 para Ensalada Chica):
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="text-xs font-bold text-amber-900 block">
+                            Cantidad máxima general por sección / opción:
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-amber-950">
+                            <input
+                              type="checkbox"
+                              checked={isUnlimited}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setIsUnlimited(checked);
+                                if (!checked && (!maxFlavors || maxFlavors === '0')) {
+                                  setMaxFlavors('1');
+                                }
+                              }}
+                              className="w-3.5 h-3.5 accent-amber-600 rounded"
+                            />
+                            <span>♾️ Sin límite</span>
+                          </label>
+                        </div>
+
                         <input
                           type="number"
                           min="1"
-                          required={allowsFlavorSelection}
-                          placeholder="Ej: 3"
-                          value={maxFlavors}
+                          disabled={isUnlimited}
+                          placeholder="Escribí un número..."
+                          value={isUnlimited ? '' : maxFlavors}
                           onChange={(e) => setMaxFlavors(e.target.value)}
-                          className="w-32 p-2 bg-white border border-amber-300 rounded-lg text-sm font-bold text-amber-900 outline-none focus:border-amber-600"
+                          className="w-full p-2 bg-white border border-amber-300 rounded-lg text-sm font-bold text-amber-900 outline-none focus:border-amber-600 disabled:bg-gray-100 disabled:text-gray-400"
                         />
+                        <p className="text-[11px] text-amber-800 mt-1">
+                          *(Guarniciones y Salsas son opcionales. Las demás secciones exigen elegir al menos 1).*
+                        </p>
                       </div>
 
                       <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-950 pt-1">
@@ -502,7 +603,7 @@ export default function AdminPage() {
                           className="w-4 h-4 accent-amber-600 rounded"
                         />
                         <span>
-                          🔄 Permitir repetir la cantidad del mismo gusto (SÍ para Empanadas, NO para Ensaladas)
+                          🔄 Permitir repetir la cantidad del mismo ítem
                         </span>
                       </label>
                     </div>
@@ -513,7 +614,7 @@ export default function AdminPage() {
                 <div className="md:col-span-2 bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-2">
                     <label className="text-xs font-extrabold text-slate-900 uppercase tracking-wide">
-                      🧀 Adicionales y Gustos permitidos para este producto:
+                      🧀 Adicionales y Opciones asociadas a este producto:
                     </label>
 
                     {addons.length > 0 && (
@@ -523,7 +624,7 @@ export default function AdminPage() {
                           onClick={selectAllGlobalAddons}
                           className="text-[10px] font-bold bg-slate-900 hover:bg-slate-800 text-white px-2 py-1 rounded-md transition-all"
                         >
-                          ✓ Marcar Todo el Menú
+                          ✓ Marcar Todo
                         </button>
                         <button
                           type="button"
@@ -617,59 +718,95 @@ export default function AdminPage() {
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h2 className="text-base font-bold text-slate-900 mb-4">📋 Lista de Productos</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4 pb-2 border-b border-gray-100">
+                <h2 className="text-base font-bold text-slate-900">📋 Lista de Productos</h2>
+                {products.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllProducts}
+                      className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      ✓ Marcar todos
+                    </button>
+                    {selectedProductIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={deselectAllProducts}
+                        className="text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-all"
+                      >
+                        ✕ Desmarcar
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {loadingProducts ? (
                 <p className="text-sm text-gray-500">Cargando datos...</p>
               ) : (
                 <div className="divide-y">
-                  {products.map((prod) => (
-                    <div key={prod.id} className="py-3 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={prod.image_url}
-                          alt={prod.name}
-                          className="w-12 h-12 object-cover rounded-lg bg-gray-100"
-                        />
-                        <div>
-                          <p className="font-bold text-sm text-gray-900">{prod.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs font-semibold text-gray-500">${Number(prod.price).toLocaleString()}</span>
-                            {prod.allows_flavor_selection && (
-                              <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
-                                {prod.max_flavors} ítems ({prod.allow_flavor_repetition ? 'Repetición SÍ' : 'Repetición NO'})
+                  {products.map((prod) => {
+                    const isSelected = selectedProductIds.includes(prod.id);
+                    return (
+                      <div key={prod.id} className={`py-3 flex items-center justify-between gap-4 px-2 rounded-lg transition-colors ${
+                        isSelected ? 'bg-red-50/60' : ''
+                      }`}>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelectProduct(prod.id)}
+                            className="w-4 h-4 accent-red-600 rounded cursor-pointer flex-shrink-0"
+                          />
+                          <img
+                            src={prod.image_url}
+                            alt={prod.name}
+                            className="w-12 h-12 object-cover rounded-lg bg-gray-100 flex-shrink-0"
+                          />
+                          <div>
+                            <p className="font-bold text-sm text-gray-900">{prod.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-xs font-semibold text-gray-500">
+                                ${Number(prod.price) > 0 ? Number(prod.price).toLocaleString() : '0 (Por variaciones)'}
                               </span>
-                            )}
+                              {prod.allows_flavor_selection && (
+                                <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
+                                  Configurado por secciones
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleEditProduct(prod)}
-                          className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold px-2.5 py-1.5 rounded-lg transition-all"
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
-                          onClick={() => toggleProductAvailability(prod.id, prod.available)}
-                          className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
-                            prod.available
-                              ? 'bg-green-50 text-green-700 border-green-200'
-                              : 'bg-red-50 text-red-700 border-red-200'
-                          }`}
-                        >
-                          {prod.available ? '🟢' : '🔴'}
-                        </button>
-                        <button
-                          onClick={() => deleteProduct(prod.id)}
-                          className="text-xs bg-gray-100 hover:bg-red-100 text-red-600 p-1.5 rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          🗑️
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditProduct(prod)}
+                            className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold px-2.5 py-1.5 rounded-lg transition-all"
+                          >
+                            ✏️ Editar
+                          </button>
+                          <button
+                            onClick={() => toggleProductAvailability(prod.id, prod.available)}
+                            className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                              prod.available
+                                ? 'bg-green-50 text-green-700 border-green-200'
+                                : 'bg-red-50 text-red-700 border-red-200'
+                            }`}
+                          >
+                            {prod.available ? '🟢' : '🔴'}
+                          </button>
+                          <button
+                            onClick={() => deleteProduct(prod.id)}
+                            className="text-xs bg-gray-100 hover:bg-red-100 text-red-600 p-1.5 rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            🗑️
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -689,7 +826,7 @@ export default function AdminPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Cebolla, Carne Suave, Coca Cola..."
+                    placeholder="Ej: Ternera, Pollo, Papas Fritas..."
                     value={addonName}
                     onChange={(e) => setAddonName(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-sm outline-none focus:border-slate-900"
@@ -713,11 +850,14 @@ export default function AdminPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Empanadas, Ensaladas, Bebidas, Quesos"
+                    placeholder="Ej: Tipo de Carne, Guarnición, Empanadas"
                     value={addonCategory}
                     onChange={(e) => setAddonCategory(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-sm outline-none focus:border-slate-900"
                   />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    *Tip: Usá <strong>"Tipo de Carne"</strong> para obligar a elegir 1, y <strong>"Guarnición"</strong> o <strong>"Salsas"</strong> para las opcionales.
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-3 pt-4">
@@ -755,7 +895,30 @@ export default function AdminPage() {
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h2 className="text-base font-bold text-slate-900 mb-4">📋 Lista de Gustos y Adicionales</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4 pb-2 border-b border-gray-100">
+                <h2 className="text-base font-bold text-slate-900">📋 Lista de Gustos y Adicionales</h2>
+                {addons.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllAddonsTab}
+                      className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      ✓ Marcar todos
+                    </button>
+                    {selectedAddonGroupIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={deselectAllAddonsTab}
+                        className="text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-all"
+                      >
+                        ✕ Desmarcar
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {loadingAddons ? (
                 <p className="text-sm text-gray-500">Cargando datos...</p>
               ) : addons.length === 0 ? (
@@ -771,42 +934,55 @@ export default function AdminPage() {
                         </span>
                       </h3>
                       <div className="divide-y divide-gray-200/80">
-                        {items.map((addon) => (
-                          <div key={addon.id} className="py-2.5 flex items-center justify-between gap-4">
-                            <div>
-                              <p className="font-bold text-sm text-gray-900">{addon.name}</p>
-                              <p className="text-xs font-semibold text-emerald-600 mt-0.5">
-                                {addon.price > 0 ? `$${Number(addon.price).toLocaleString()}` : 'Sin costo adicional'}
-                              </p>
-                            </div>
+                        {items.map((addon) => {
+                          const isSelected = selectedAddonGroupIds.includes(addon.id);
+                          return (
+                            <div key={addon.id} className={`py-2.5 flex items-center justify-between gap-4 px-2 rounded-lg transition-colors ${
+                              isSelected ? 'bg-red-50/60' : ''
+                            }`}>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelectAddonGroup(addon.id)}
+                                  className="w-4 h-4 accent-red-600 rounded cursor-pointer flex-shrink-0"
+                                />
+                                <div>
+                                  <p className="font-bold text-sm text-gray-900">{addon.name}</p>
+                                  <p className="text-xs font-semibold text-emerald-600 mt-0.5">
+                                    {addon.price > 0 ? `$${Number(addon.price).toLocaleString()}` : 'Sin costo adicional'}
+                                  </p>
+                                </div>
+                              </div>
 
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => toggleAddonAvailability(addon)}
-                                className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
-                                  addon.available
-                                    ? 'bg-green-50 text-green-700 border-green-200'
-                                    : 'bg-red-50 text-red-700 border-red-200'
-                                }`}
-                              >
-                                {addon.available ? '🟢 Disponible' : '🔴 Pausado'}
-                              </button>
-                              <button
-                                onClick={() => handleEditAddon(addon)}
-                                className="text-xs bg-gray-100 hover:bg-gray-200 text-slate-800 px-2.5 py-1.5 rounded-lg font-bold transition-all"
-                              >
-                                ✏️
-                              </button>
-                              <button
-                                onClick={() => deleteAddon(addon.id)}
-                                className="text-xs bg-gray-100 hover:bg-red-100 text-red-600 p-1.5 rounded-lg transition-all"
-                                title="Eliminar"
-                              >
-                                🗑️
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => toggleAddonAvailability(addon)}
+                                  className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                                    addon.available
+                                      ? 'bg-green-50 text-green-700 border-green-200'
+                                      : 'bg-red-50 text-red-700 border-red-200'
+                                  }`}
+                                >
+                                  {addon.available ? '🟢 Disponible' : '🔴 Pausado'}
+                                </button>
+                                <button
+                                  onClick={() => handleEditAddon(addon)}
+                                  className="text-xs bg-gray-100 hover:bg-gray-200 text-slate-800 px-2.5 py-1.5 rounded-lg font-bold transition-all"
+                                >
+                                  ✏️
+                                </button>
+                                <button
+                                  onClick={() => deleteAddon(addon.id)}
+                                  className="text-xs bg-gray-100 hover:bg-red-100 text-red-600 p-1.5 rounded-lg transition-all"
+                                  title="Eliminar"
+                                >
+                                  🗑️
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -817,6 +993,42 @@ export default function AdminPage() {
         )}
 
       </div>
+
+      {/* BARRA FLOTANTE DE ACCIÓN MASIVA PARA PRODUCTOS */}
+      {activeTab === 'products' && selectedProductIds.length > 0 && (
+        <div className="fixed bottom-5 left-0 right-0 px-4 z-30 max-w-md mx-auto animate-fadeIn">
+          <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl flex justify-between items-center border border-slate-700">
+            <span className="text-xs font-bold">
+              {selectedProductIds.length} {selectedProductIds.length === 1 ? 'producto seleccionado' : 'productos seleccionados'}
+            </span>
+            <button
+              onClick={deleteSelectedProducts}
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+            >
+              <span>🗑️</span>
+              <span>Eliminar Selección</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BARRA FLOTANTE DE ACCIÓN MASIVA PARA ADICIONALES */}
+      {activeTab === 'addons' && selectedAddonGroupIds.length > 0 && (
+        <div className="fixed bottom-5 left-0 right-0 px-4 z-30 max-w-md mx-auto animate-fadeIn">
+          <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl flex justify-between items-center border border-slate-700">
+            <span className="text-xs font-bold">
+              {selectedAddonGroupIds.length} {selectedAddonGroupIds.length === 1 ? 'adicional seleccionado' : 'adicionales seleccionados'}
+            </span>
+            <button
+              onClick={deleteSelectedAddons}
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+            >
+              <span>🗑️</span>
+              <span>Eliminar Selección</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
