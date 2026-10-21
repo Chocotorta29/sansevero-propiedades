@@ -12,8 +12,9 @@ export default function MenuPage() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Estado de apertura manual
+  // Estado de apertura manual y fecha actual montada en cliente
   const [isForcedClosed, setIsForcedClosed] = useState(false);
+  const [now, setNow] = useState(null);
 
   // Desplegable Horarios
   const [isHoursOpen, setIsHoursOpen] = useState(false);
@@ -50,12 +51,19 @@ export default function MenuPage() {
     { day: 'Domingo', dayIndex: 0, open1: '11:30', close1: '14:30', singleShift: true },
   ], []);
 
-  // EVALUAR SI EL LOCAL ESTÁ ABIERTO EN TIEMPO REAL
+  // Inicializar la hora del cliente tras el montaje
+  useEffect(() => {
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // EVALUAR SI EL LOCAL ESTÁ ABIERTO EN TIEMPO REAL (SOLO CLIENTE)
   const isOpenNow = useMemo(() => {
     if (isForcedClosed) return false;
+    if (!now) return false;
 
-    const now = new Date();
-    const currentDayIndex = now.getDay(); // 0 = Domingo, 1 = Lunes, etc.
+    const currentDayIndex = now.getDay();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
     const todayConfig = schedule.find((s) => s.dayIndex === currentDayIndex);
@@ -67,14 +75,12 @@ export default function MenuPage() {
       return h * 60 + m;
     };
 
-    // Turno 1
     const o1 = timeToMinutes(todayConfig.open1);
     const c1 = timeToMinutes(todayConfig.close1);
     const inShift1 = currentMinutes >= o1 && currentMinutes <= c1;
 
     if (inShift1) return true;
 
-    // Turno 2 (si aplica)
     if (!todayConfig.singleShift && todayConfig.open2 && todayConfig.close2) {
       const o2 = timeToMinutes(todayConfig.open2);
       const c2 = timeToMinutes(todayConfig.close2);
@@ -82,7 +88,7 @@ export default function MenuPage() {
     }
 
     return false;
-  }, [isForcedClosed, schedule]);
+  }, [isForcedClosed, now, schedule]);
 
   useEffect(() => {
     fetchMenuData();
@@ -218,7 +224,6 @@ export default function MenuPage() {
     setOpenUnitIndex((prev) => (prev >= newQty ? newQty - 1 : prev));
   }, []);
 
-  // Lógica acumulada para EMPANADAS
   const totalEmpanadaLimit = useMemo(() => {
     if (!selectedProduct) return 0;
     const baseMax = selectedProduct.max_flavors || 1;
@@ -251,7 +256,6 @@ export default function MenuPage() {
     });
   }, [currentEmpFlavorsCount, totalEmpanadaLimit]);
 
-  // Lógica de unidades independientes para OTROS PLATOS
   const updateFlavorQuantityForUnit = useCallback((unitIndex, addonId, delta) => {
     if (!selectedProduct) return;
 
@@ -309,7 +313,6 @@ export default function MenuPage() {
     });
   }, [selectedProduct, availableAddons, allAddonsMap]);
 
-  // VALIDACIÓN POR SECCIONES
   const isAllUnitsValid = useCallback(() => {
     if (!selectedProduct) return false;
     if (!selectedProduct.allows_flavor_selection) return true;
