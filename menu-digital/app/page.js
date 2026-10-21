@@ -1,451 +1,653 @@
 'use client';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
 
-import { useState, useEffect, useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-// Inicialización del cliente Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-export default function Home() {
-  // --- ESTADOS DE BASE DE DATOS ---
+export default function MenuPage() {
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
-  const [addons, setAddons] = useState([]);
-  const [productAddons, setProductAddons] = useState([]);
-  const [storeConfig, setStoreConfig] = useState({ is_forced_closed: false });
-  const [loading, setLoading] = useState(true);
-
-  // --- ESTADOS DE NAVEGACIÓN Y FILTROS ---
+  const [productAddonsMap, setProductAddonsMap] = useState({});
+  const [allAddonsMap, setAllAddonsMap] = useState({});
   const [selectedCategory, setSelectedCategory] = useState(null);
-  const [isMapOpen, setIsMapOpen] = useState(false);
-  const [isHoursOpen, setIsHoursOpen] = useState(false);
-
-  // --- ESTADO DEL MODAL DE PRODUCTO (GUSTOS / ADICIONALES) ---
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [modalQuantity, setModalQuantity] = useState(1);
-  const [selectedAddons, setSelectedAddons] = useState({}); // { addon_id: cantidad }
-  const [modalNotes, setModalNotes] = useState('');
-
-  // --- ESTADO DEL CARRITO ---
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // --- FORMULARIO DE CHECKOUT ---
+  // Estado de apertura manual y fecha actual montada en cliente
+  const [isForcedClosed, setIsForcedClosed] = useState(false);
+  const [now, setNow] = useState(null);
+
+  // Cartel / Modal de Local Cerrado
+  const [isClosedNoticeOpen, setIsClosedNoticeOpen] = useState(false);
+
+  // Desplegable Horarios
+  const [isHoursOpen, setIsHoursOpen] = useState(false);
+
+  // Modal de Producto
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productQuantity, setProductQuantity] = useState(1);
+  const [availableAddons, setAvailableAddons] = useState([]);
+  const [itemNotes, setItemNotes] = useState('');
+
+  // Estructura por cada unidad (para platos no-empanada)
+  const [unitsData, setUnitsData] = useState([]);
+  const [openUnitIndex, setOpenUnitIndex] = useState(0);
+
+  // Selección acumulada unificada (para Empanadas)
+  const [empFlavors, setEmpFlavors] = useState({});
+
+  // Datos Pedido
   const [customerName, setCustomerName] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
+  const [orderType, setOrderType] = useState('Delivery');
+  const [address, setAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
-  const [customerNotes, setCustomerNotes] = useState('');
 
-  // 1. CARGA DE DATOS DESDE SUPABASE
+  // DATOS DEL NEGOCIO: COMO EN CASA
+  const PHONE_NUMBER = '5492236036415';
+
+  const schedule = useMemo(() => [
+    { day: 'Lunes', dayIndex: 1, closed: true },
+    { day: 'Martes', dayIndex: 2, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Miércoles', dayIndex: 3, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Jueves', dayIndex: 4, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Viernes', dayIndex: 5, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Sábado', dayIndex: 6, open1: '11:30', close1: '14:30', open2: '19:30', close2: '22:30' },
+    { day: 'Domingo', dayIndex: 0, open1: '11:30', close1: '14:30', singleShift: true },
+  ], []);
+
+  // Inicializar la hora del cliente tras el montaje
   useEffect(() => {
-    async function fetchAllData() {
-      setLoading(true);
-
-      try {
-        // Cargar Categorías
-        const { data: catData } = await supabase
-          .from('categories')
-          .select('*')
-          .order('sort_order', { ascending: true });
-
-        if (catData && catData.length > 0) {
-          setCategories(catData);
-          setSelectedCategory(catData[0].id);
-        }
-
-        // Cargar Productos
-        const { data: prodData } = await supabase
-          .from('products')
-          .select('*')
-          .eq('available', true)
-          .order('created_at', { ascending: false });
-
-        if (prodData) setProducts(prodData);
-
-        // Cargar Adicionales / Gustos
-        const { data: addonsData } = await supabase
-          .from('addons')
-          .select('*')
-          .eq('available', true);
-
-        if (addonsData) setAddons(addonsData);
-
-        // Cargar Relación Producto <-> Adicionales
-        const { data: paData } = await supabase
-          .from('product_addons')
-          .select('*');
-
-        if (paData) setProductAddons(paData);
-
-        // Cargar Estado del Local
-        const { data: configData } = await supabase
-          .from('store_config')
-          .select('*')
-          .eq('id', 1)
-          .single();
-
-        if (configData) setStoreConfig(configData);
-      } catch (error) {
-        console.error('Error cargando datos de Supabase:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchAllData();
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
   }, []);
 
-  // 2. CÁLCULO DE HORARIOS Y ESTADO DEL LOCAL
+  // EVALUAR SI EL LOCAL ESTÁ ABIERTO EN TIEMPO REAL (SOLO CLIENTE)
   const isOpenNow = useMemo(() => {
-    if (storeConfig?.is_forced_closed) return false;
+    if (isForcedClosed) return false;
+    if (!now) return false;
 
-    const now = new Date();
-    const day = now.getDay(); // 0 = Dom, 1 = Lun, 2 = Mar, ..., 6 = Sáb
-    const hour = now.getHours();
-    const minutes = now.getMinutes();
-    const currentTime = hour * 60 + minutes;
+    const currentDayIndex = now.getDay();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // CERRADO: Domingo (0) y Lunes (1)
-    if (day === 0 || day === 1) return false;
+    const todayConfig = schedule.find((s) => s.dayIndex === currentDayIndex);
+    if (!todayConfig || todayConfig.closed) return false;
 
-    // Martes a Sábado (2 a 6): 11:30 - 14:30 y 19:30 - 22:30
-    const turn1Start = 11 * 60 + 30; // 11:30
-    const turn1End = 14 * 60 + 30;   // 14:30
-    const turn2Start = 19 * 60 + 30; // 19:30
-    const turn2End = 22 * 60 + 30;   // 22:30
+    const timeToMinutes = (timeStr) => {
+      if (!timeStr) return 0;
+      const [h, m] = timeStr.split(':').map(Number);
+      return h * 60 + m;
+    };
 
-    const inTurn1 = currentTime >= turn1Start && currentTime <= turn1End;
-    const inTurn2 = currentTime >= turn2Start && currentTime <= turn2End;
+    const o1 = timeToMinutes(todayConfig.open1);
+    const c1 = timeToMinutes(todayConfig.close1);
+    const inShift1 = currentMinutes >= o1 && currentMinutes <= c1;
 
-    return inTurn1 || inTurn2;
-  }, [storeConfig]);
+    if (inShift1) return true;
 
-  // 3. ABRIR MODAL DE PRODUCTO O AGREGAR DIRECTO
-  const handleProductClick = (product) => {
-    if (!isOpenNow) return;
-
-    // Buscar si el producto tiene adicionales asociados
-    const linkedAddonIds = productAddons
-      .filter((pa) => pa.product_id === product.id)
-      .map((pa) => pa.addon_id);
-
-    const availableProductAddons = addons.filter((a) => linkedAddonIds.includes(a.id));
-
-    if (product.allows_flavor_selection || availableProductAddons.length > 0) {
-      setSelectedProduct(product);
-      setModalQuantity(1);
-      setSelectedAddons({});
-      setModalNotes('');
-    } else {
-      // Agregar directamente si no tiene opciones
-      addToCartDirect(product);
-    }
-  };
-
-  const addToCartDirect = (product) => {
-    setCart((prevCart) => {
-      const existingIndex = prevCart.findIndex(
-        (item) => item.id === product.id && Object.keys(item.selectedAddons || {}).length === 0
-      );
-
-      if (existingIndex > -1) {
-        const updated = [...prevCart];
-        updated[existingIndex].quantity += 1;
-        return updated;
-      }
-
-      return [
-        ...prevCart,
-        {
-          cartItemId: `${product.id}-${Date.now()}`,
-          id: product.id,
-          name: product.name,
-          price: Number(product.price),
-          quantity: 1,
-          selectedAddons: {},
-          addonDetails: [],
-          notes: '',
-        },
-      ];
-    });
-  };
-
-  // 4. LÓGICA DEL MODAL DE SELECCIÓN DE GUSTOS / ADICIONALES
-  const availableModalAddons = useMemo(() => {
-    if (!selectedProduct) return [];
-    const linkedAddonIds = productAddons
-      .filter((pa) => pa.product_id === selectedProduct.id)
-      .map((pa) => pa.addon_id);
-    return addons.filter((a) => linkedAddonIds.includes(a.id));
-  }, [selectedProduct, productAddons, addons]);
-
-  const totalAddonsSelectedCount = useMemo(() => {
-    return Object.values(selectedAddons).reduce((acc, qty) => acc + qty, 0);
-  }, [selectedAddons]);
-
-  const handleAddonQuantityChange = (addonId, delta) => {
-    const currentQty = selectedAddons[addonId] || 0;
-    const newQty = currentQty + delta;
-
-    if (newQty < 0) return;
-
-    if (delta > 0 && selectedProduct?.allows_flavor_selection) {
-      const maxAllowed = selectedProduct.max_flavors || 1;
-      if (totalAddonsSelectedCount + 1 > maxAllowed) return;
-
-      if (!selectedProduct.allow_flavor_repetition && newQty > 1) return;
+    if (!todayConfig.singleShift && todayConfig.open2 && todayConfig.close2) {
+      const o2 = timeToMinutes(todayConfig.open2);
+      const c2 = timeToMinutes(todayConfig.close2);
+      return currentMinutes >= o2 && currentMinutes <= c2;
     }
 
-    setSelectedAddons((prev) => {
-      const updated = { ...prev };
-      if (newQty === 0) {
-        delete updated[addonId];
-      } else {
-        updated[addonId] = newQty;
+    return false;
+  }, [isForcedClosed, now, schedule]);
+
+  useEffect(() => {
+    fetchMenuData();
+    fetchStoreConfig();
+  }, []);
+
+  async function fetchStoreConfig() {
+    try {
+      const { data } = await supabase.from('store_config').select('is_forced_closed').eq('id', 1).single();
+      if (data) {
+        setIsForcedClosed(data.is_forced_closed || false);
       }
-      return updated;
-    });
-  };
+    } catch (err) {
+      console.error('Error al cargar config:', err);
+    }
+  }
 
-  const calculatedModalUnitPrice = useMemo(() => {
-    if (!selectedProduct) return 0;
-    let base = Number(selectedProduct.price);
+  async function fetchMenuData() {
+    setLoading(true);
+    try {
+      const [
+        { data: cats },
+        { data: prods },
+        { data: addonsData },
+        { data: prodAddonsData }
+      ] = await Promise.all([
+        supabase.from('categories').select('*'),
+        supabase.from('products').select('*').eq('available', true),
+        supabase.from('addons').select('*').eq('available', true),
+        supabase.from('product_addons').select('*')
+      ]);
 
-    Object.entries(selectedAddons).forEach(([addonId, qty]) => {
-      const addon = addons.find((a) => a.id === addonId);
-      if (addon) {
-        base += Number(addon.price) * qty;
+      if (cats && cats.length > 0) {
+        const customOrder = [
+          'sugerencias',
+          'pastas',
+          'milanesas',
+          'hamburguesas',
+          'ensaladas',
+          'tartas',
+          'pizzas',
+          'empanadas',
+          'postres',
+          'promociones'
+        ];
+
+        const sortedCats = [...cats].sort((a, b) => {
+          const nameA = a.name.toLowerCase().trim();
+          const nameB = b.name.toLowerCase().trim();
+
+          let indexA = customOrder.findIndex((item) => nameA.includes(item));
+          let indexB = customOrder.findIndex((item) => nameB.includes(item));
+
+          if (indexA === -1) indexA = 99;
+          if (indexB === -1) indexB = 99;
+
+          return indexA - indexB;
+        });
+
+        setCategories(sortedCats);
+        setSelectedCategory(sortedCats[0].id);
       }
-    });
 
-    return base;
-  }, [selectedProduct, selectedAddons, addons]);
+      if (prods) setProducts(prods);
 
-  const confirmAddToCartFromModal = () => {
-    if (!selectedProduct || !isOpenNow) return;
+      const addonsById = {};
+      if (addonsData) {
+        addonsData.forEach((a) => {
+          addonsById[a.id] = a;
+        });
+        setAllAddonsMap(addonsById);
+      }
 
-    if (
-      selectedProduct.allows_flavor_selection &&
-      totalAddonsSelectedCount < (selectedProduct.max_flavors || 1)
-    ) {
-      alert(`Por favor seleccioná ${selectedProduct.max_flavors} gustos para continuar.`);
+      const map = {};
+      if (prodAddonsData) {
+        prodAddonsData.forEach((rel) => {
+          if (!map[rel.product_id]) map[rel.product_id] = [];
+          if (addonsById[rel.addon_id]) {
+            map[rel.product_id].push(addonsById[rel.addon_id]);
+          }
+        });
+      }
+      setProductAddonsMap(map);
+
+    } catch (err) {
+      console.error('Error al cargar datos:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isEmpanadaProduct = useCallback((product) => {
+    if (!product) return false;
+    const prodName = product.name.toLowerCase();
+    const catObj = categories.find((c) => c.id === product.category_id);
+    const catName = (catObj?.name || '').toLowerCase();
+    return prodName.includes('empanada') || catName.includes('empanada');
+  }, [categories]);
+
+  const filteredProducts = useMemo(() => {
+    if (!selectedCategory) return [];
+    return products.filter((p) => p.category_id === selectedCategory);
+  }, [products, selectedCategory]);
+
+  const openProductModal = useCallback((product) => {
+    if (!isOpenNow) {
+      setIsClosedNoticeOpen(true);
       return;
     }
 
-    const addonDetails = Object.entries(selectedAddons).map(([addonId, qty]) => {
-      const addon = addons.find((a) => a.id === addonId);
-      return {
-        id: addonId,
-        name: addon ? addon.name : '',
-        quantity: qty,
-        price: addon ? Number(addon.price) : 0,
-      };
+    setSelectedProduct(product);
+    setProductQuantity(1);
+    setUnitsData([{ selectedAddons: [], flavorQuantities: {} }]);
+    setOpenUnitIndex(0);
+    setEmpFlavors({});
+    setItemNotes('');
+
+    const addons = productAddonsMap[product.id] || [];
+    setAvailableAddons(addons);
+  }, [productAddonsMap, isOpenNow]);
+
+  const handleQuantityChange = useCallback((newQty) => {
+    if (newQty < 1) return;
+    setProductQuantity(newQty);
+
+    setUnitsData((prev) => {
+      if (newQty > prev.length) {
+        const extra = Array.from({ length: newQty - prev.length }, () => ({
+          selectedAddons: [],
+          flavorQuantities: {}
+        }));
+        return [...prev, ...extra];
+      } else {
+        return prev.slice(0, newQty);
+      }
     });
 
-    setCart((prevCart) => [
-      ...prevCart,
-      {
-        cartItemId: `${selectedProduct.id}-${Date.now()}`,
-        id: selectedProduct.id,
-        name: selectedProduct.name,
-        price: calculatedModalUnitPrice,
-        quantity: modalQuantity,
-        selectedAddons,
-        addonDetails,
-        notes: modalNotes,
-      },
-    ]);
+    setOpenUnitIndex((prev) => (prev >= newQty ? newQty - 1 : prev));
+  }, []);
 
+  const totalEmpanadaLimit = useMemo(() => {
+    if (!selectedProduct) return 0;
+    const baseMax = selectedProduct.max_flavors || 1;
+    return baseMax * productQuantity;
+  }, [selectedProduct, productQuantity]);
+
+  const currentEmpFlavorsCount = useMemo(() => {
+    return Object.values(empFlavors).reduce((s, qty) => s + qty, 0);
+  }, [empFlavors]);
+
+  const updateEmpanadaFlavorQuantity = useCallback((addonId, delta) => {
+    setEmpFlavors((prev) => {
+      const current = prev[addonId] || 0;
+      let next = current + delta;
+
+      if (delta > 0 && currentEmpFlavorsCount >= totalEmpanadaLimit) {
+        return prev;
+      }
+
+      next = Math.max(0, next);
+      const updated = { ...prev };
+
+      if (next === 0) {
+        delete updated[addonId];
+      } else {
+        updated[addonId] = next;
+      }
+
+      return updated;
+    });
+  }, [currentEmpFlavorsCount, totalEmpanadaLimit]);
+
+  const updateFlavorQuantityForUnit = useCallback((unitIndex, addonId, delta) => {
+    if (!selectedProduct) return;
+
+    setUnitsData((prev) => {
+      const updated = [...prev];
+      const unit = { ...updated[unitIndex] };
+      const flavorMap = { ...unit.flavorQuantities };
+
+      const current = flavorMap[addonId] || 0;
+      let next = current + delta;
+
+      const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+      const groupName = (addon?.category || '').toLowerCase();
+
+      const maxFlavorsUnit = selectedProduct.max_flavors || 0;
+      const allowRepetition = selectedProduct.allow_flavor_repetition ?? true;
+
+      if (!allowRepetition && delta > 0 && current >= 1) {
+        return prev;
+      }
+
+      const isCarneGroup = groupName.includes('tipo de carne') || groupName === 'carne' || groupName === 'tipo';
+      if (isCarneGroup && delta > 0) {
+        Object.keys(flavorMap).forEach((id) => {
+          const item = availableAddons.find((a) => a.id === id) || allAddonsMap[id];
+          const cat = (item?.category || '').toLowerCase();
+          if (cat.includes('tipo de carne') || cat === 'carne' || cat === 'tipo') {
+            delete flavorMap[id];
+          }
+        });
+        next = 1;
+      }
+
+      if (maxFlavorsUnit > 0 && delta > 0 && !isCarneGroup) {
+        const groupAddons = availableAddons.filter((a) => (a.category || '').toLowerCase() === groupName);
+        const currentGroupTotal = groupAddons.reduce((s, a) => s + (flavorMap[a.id] || 0), 0);
+
+        if (currentGroupTotal >= maxFlavorsUnit) {
+          return prev;
+        }
+      }
+
+      next = Math.max(0, next);
+
+      if (next === 0) {
+        delete flavorMap[addonId];
+      } else {
+        flavorMap[addonId] = next;
+      }
+
+      unit.flavorQuantities = flavorMap;
+      updated[unitIndex] = unit;
+
+      return updated;
+    });
+  }, [selectedProduct, availableAddons, allAddonsMap]);
+
+  const isAllUnitsValid = useCallback(() => {
+    if (!selectedProduct) return false;
+    if (!selectedProduct.allows_flavor_selection) return true;
+
+    if (isEmpanadaProduct(selectedProduct)) {
+      return currentEmpFlavorsCount === totalEmpanadaLimit;
+    }
+
+    const groups = availableAddons.reduce((acc, a) => {
+      const cat = a.category || 'General';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(a);
+      return acc;
+    }, {});
+
+    return unitsData.every((unit) => {
+      return Object.entries(groups).every(([groupName, groupItems]) => {
+        const lowerName = groupName.toLowerCase();
+        const selectedInGroup = groupItems.reduce((sum, item) => sum + (unit.flavorQuantities[item.id] || 0), 0);
+
+        const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa');
+        if (isOpcionalGroup) {
+          const maxLimit = selectedProduct.max_flavors || 0;
+          return maxLimit === 0 ? true : selectedInGroup <= maxLimit;
+        }
+
+        if (lowerName.includes('tipo de carne') || lowerName === 'carne' || lowerName === 'tipo') {
+          return selectedInGroup === 1;
+        }
+
+        const maxLimit = selectedProduct.max_flavors || 0;
+        if (maxLimit === 0) {
+          return selectedInGroup >= 1;
+        }
+
+        return selectedInGroup >= 1 && selectedInGroup <= maxLimit;
+      });
+    });
+  }, [selectedProduct, availableAddons, unitsData, isEmpanadaProduct, currentEmpFlavorsCount, totalEmpanadaLimit]);
+
+  const calculateTotalPrice = useCallback(() => {
+    if (!selectedProduct) return 0;
+    const base = Number(selectedProduct.price) || 0;
+
+    if (isEmpanadaProduct(selectedProduct)) {
+      const empAddonsCost = Object.entries(empFlavors).reduce((s, [addonId, qty]) => {
+        const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+        return s + (addon ? Number(addon.price) * qty : 0);
+      }, 0);
+
+      return base * productQuantity + empAddonsCost;
+    }
+
+    const addonsTotal = unitsData.reduce((sum, unit) => {
+      const unitAddons = unit.selectedAddons.reduce((s, a) => s + Number(a.price), 0);
+      
+      const unitFlavorsCost = Object.entries(unit.flavorQuantities).reduce((s, [addonId, qty]) => {
+        const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+        return s + (addon ? Number(addon.price) * qty : 0);
+      }, 0);
+
+      return sum + unitAddons + unitFlavorsCost;
+    }, 0);
+
+    return base * productQuantity + addonsTotal;
+  }, [selectedProduct, unitsData, productQuantity, availableAddons, allAddonsMap, isEmpanadaProduct, empFlavors]);
+
+  const handleConfirmAddToCart = () => {
+    if (!isOpenNow) {
+      setSelectedProduct(null);
+      setIsClosedNoticeOpen(true);
+      return;
+    }
+
+    if (!selectedProduct || !isAllUnitsValid()) return;
+
+    const totalPrice = calculateTotalPrice();
+    let formattedUnits = [];
+
+    if (isEmpanadaProduct(selectedProduct)) {
+      const flavorsList = Object.entries(empFlavors).map(([addonId, qty]) => {
+        const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+        return { name: addon ? addon.name : '', qty };
+      });
+      formattedUnits = [{ flavors: flavorsList, addons: [] }];
+    } else {
+      formattedUnits = unitsData.map((unit) => {
+        const flavorsList = Object.entries(unit.flavorQuantities).map(([addonId, qty]) => {
+          const addon = availableAddons.find((a) => a.id === addonId) || allAddonsMap[addonId];
+          return { name: addon ? addon.name : '', qty };
+        });
+
+        return {
+          flavors: flavorsList,
+          addons: unit.selectedAddons
+        };
+      });
+    }
+
+    const cartItemId = `${selectedProduct.id}-${JSON.stringify(isEmpanadaProduct(selectedProduct) ? empFlavors : unitsData)}-${itemNotes.trim()}`;
+
+    const cartItem = {
+      cartItemId,
+      id: selectedProduct.id,
+      name: selectedProduct.name,
+      basePrice: Number(selectedProduct.price) || 0,
+      price: totalPrice / productQuantity,
+      totalPrice: totalPrice,
+      quantity: productQuantity,
+      units: formattedUnits,
+      notes: itemNotes.trim()
+    };
+
+    setCart((prev) => [...prev, cartItem]);
     setSelectedProduct(null);
   };
 
-  // 5. GESTIÓN DEL CARRITO DE COMPRAS
-  const updateCartQuantity = (cartItemId, delta) => {
-    setCart((prevCart) => {
-      return prevCart
+  const updateQuantityInCart = useCallback((cartItemId, delta) => {
+    setCart((prev) =>
+      prev
         .map((item) => {
           if (item.cartItemId === cartItemId) {
             const newQty = item.quantity + delta;
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
+            if (newQty <= 0) return null;
+            const unitPrice = item.totalPrice / item.quantity;
+            return {
+              ...item,
+              quantity: newQty,
+              totalPrice: unitPrice * newQty
+            };
           }
           return item;
         })
-        .filter(Boolean);
-    });
-  };
+        .filter(Boolean)
+    );
+  }, []);
 
   const cartTotal = useMemo(() => {
-    return cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+    return cart.reduce((sum, item) => sum + item.totalPrice, 0);
   }, [cart]);
 
-  // 6. ENVÍO DE PEDIDO A WHATSAPP
   const sendWhatsAppOrder = (e) => {
     e.preventDefault();
 
     if (!isOpenNow) {
-      alert('El local se encuentra cerrado en este momento.');
+      setIsCartOpen(false);
+      setIsClosedNoticeOpen(true);
       return;
     }
 
-    if (cart.length === 0) {
-      alert('El carrito está vacío.');
-      return;
-    }
+    if (cart.length === 0 || !customerName) return;
 
-    if (!customerName.trim() || !customerAddress.trim()) {
-      alert('Por favor completa tu nombre y dirección.');
-      return;
+    let text = `*NUEVO PEDIDO - COMO EN CASA*\n`;
+    text += `---------------------------------\n`;
+    text += `👤 *Cliente:* ${customerName}\n`;
+    text += `🛵 *Tipo:* ${orderType}\n`;
+    if (orderType === 'Delivery') {
+      text += `📍 *Dirección:* ${address}\n`;
     }
-
-    let message = `*¡Nuevo Pedido - Como en Casa!* 🍽️\n\n`;
-    message += `👤 *Cliente:* ${customerName.trim()}\n`;
-    message += `📍 *Dirección:* ${customerAddress.trim()}\n`;
-    message += `💳 *Forma de pago:* ${paymentMethod}\n`;
-    if (customerNotes.trim()) {
-      message += `📝 *Aclaraciones:* ${customerNotes.trim()}\n`;
-    }
-    message += `\n-------------------------------\n`;
-    message += `*DETALLE DEL PEDIDO:*\n\n`;
+    text += `💳 *Pago:* ${paymentMethod}\n`;
+    text += `---------------------------------\n`;
+    text += `*DETALLE DEL PEDIDO:*\n`;
 
     cart.forEach((item) => {
-      message += `• *${item.quantity}x ${item.name}* ($${(item.price * item.quantity).toLocaleString('es-AR')})\n`;
+      text += `• ${item.quantity}x ${item.name} ($${item.totalPrice.toLocaleString()})\n`;
 
-      if (item.addonDetails && item.addonDetails.length > 0) {
-        item.addonDetails.forEach((addon) => {
-          message += `   └ ${addon.quantity}x ${addon.name}\n`;
-        });
-      }
+      item.units.forEach((u, i) => {
+        const parts = [];
+        if (u.flavors && u.flavors.length > 0) {
+          const fStr = u.flavors.map((f) => f.qty > 1 ? `${f.qty}x ${f.name}` : f.name).join(', ');
+          parts.push(`Gustos: ${fStr}`);
+        }
+        if (u.addons && u.addons.length > 0) {
+          const aStr = u.addons.map((a) => a.name).join(', ');
+          parts.push(`Adicionales: ${aStr}`);
+        }
+
+        if (parts.length > 0) {
+          text += `   ↳ ${parts.join(' | ')}\n`;
+        }
+      });
 
       if (item.notes) {
-        message += `   └ _Nota: ${item.notes}_\n`;
+        text += `   ↳ Nota: "${item.notes}"\n`;
       }
     });
 
-    message += `\n-------------------------------\n`;
-    message += `*TOTAL A PAGAR: $${cartTotal.toLocaleString('es-AR')}*`;
+    text += `---------------------------------\n`;
+    text += `💰 *TOTAL: $${cartTotal.toLocaleString()}*`;
 
-    const phoneNumber = '5492230000000'; // Reemplazar por el WhatsApp oficial
-    const encodedMessage = encodeURIComponent(message);
-    window.open(`https://wa.me/${phoneNumber}?text=${encodedMessage}`, '_blank');
+    const encodedText = encodeURIComponent(text);
+    window.open(`https://wa.me/${PHONE_NUMBER}?text=${encodedText}`, '_blank');
   };
 
-  // Productos filtrados por categoría
-  const filteredProducts = useMemo(() => {
-    if (!selectedCategory) return products;
-    return products.filter((p) => p.category_id === selectedCategory);
-  }, [products, selectedCategory]);
+  const modalGroupedAddons = useMemo(() => {
+    return availableAddons.reduce((acc, addon) => {
+      const cat = addon.category?.trim() || 'General';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(addon);
+      return acc;
+    }, {});
+  }, [availableAddons]);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 pb-28 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-28 font-sans selection:bg-red-600 selection:text-white">
+      
       {/* HEADER PRINCIPAL */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-md">
-              CC
-            </div>
-            <div>
-              <h1 className="font-black text-xl text-red-600 tracking-tight leading-none">
-                COMO EN CASA
-              </h1>
-              <p className="text-xs text-slate-500 font-medium mt-1">Simplificamos tu vida cocinándote</p>
-            </div>
+      <header className="relative w-full h-72 md:h-80 flex items-center justify-center text-center overflow-hidden border-b border-red-200 shadow-lg">
+        <div
+          className="absolute inset-0 bg-cover bg-center transition-transform duration-1000 scale-105"
+          style={{ backgroundImage: `url('/encabezado.jpg')` }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-white/50 backdrop-blur-[1px]" />
+        
+        <div className="relative z-10 px-4 max-w-xl mx-auto flex flex-col items-center">
+          <span className="text-[10px] md:text-xs font-extrabold tracking-[0.2em] text-red-700 uppercase bg-red-100/90 px-4 py-1 rounded-full border border-red-300 mb-3 backdrop-blur-md shadow-sm">
+            Comida Casera
+          </span>
+
+          <div className="flex items-center justify-center gap-3">
+            <img
+              src="/logo.jpg"
+              alt="Logo Como en Casa"
+              className="h-12 w-12 md:h-16 md:w-16 object-cover rounded-2xl shadow-md border-2 border-red-600 flex-shrink-0"
+            />
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight text-red-700 uppercase drop-shadow-sm leading-none">
+              Como en casa
+            </h1>
           </div>
 
-          <button
-            onClick={() => setIsCartOpen(true)}
-            className="relative bg-red-600 hover:bg-red-700 text-white p-2.5 rounded-2xl shadow-md transition-all active:scale-95 flex items-center gap-2"
-          >
-            <span className="text-xs font-black hidden sm:inline uppercase tracking-wider">Carrito</span>
-            <span className="text-lg">🛒</span>
-            {cart.length > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-900 font-black text-xs w-5 h-5 rounded-full flex items-center justify-center shadow">
-                {cart.reduce((a, b) => a + b.quantity, 0)}
-              </span>
-            )}
-          </button>
+          <p className="text-xs md:text-sm text-slate-700 font-semibold tracking-wide mt-2">
+            Simplificamos tu vida cocinándote
+          </p>
         </div>
       </header>
 
-      {/* INFORMACIÓN Y ESTADO DEL LOCAL */}
-      <section className="max-w-4xl mx-auto px-4 mt-4">
-        <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
-          {/* Horarios */}
-          <div className="relative flex-1 w-full md:w-auto">
+      {/* HORARIOS Y UBICACIÓN CON ESTADO ABIERTO/CERRADO REAL */}
+      <section className="max-w-6xl mx-auto px-4 -mt-6 relative z-10">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          
+          <div className="w-full">
             <button
               onClick={() => setIsHoursOpen(!isHoursOpen)}
-              className="flex items-center gap-3 text-left w-full focus:outline-none"
+              className="w-full flex items-center justify-between gap-2 text-xs font-medium text-slate-700 hover:text-slate-900 transition-colors bg-slate-50 p-3 rounded-xl border border-slate-200"
             >
-              <div className="p-2.5 bg-slate-100 rounded-2xl text-slate-600 text-xl">🕒</div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-sm">Horarios</span>
-                  <span
-                    className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${
-                      isOpenNow ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                    }`}
-                  >
-                    {isOpenNow ? 'Abierto' : 'Cerrado'}
-                  </span>
-                  <span className="text-xs text-slate-400">▼</span>
+              <div className="flex items-center gap-2 text-left">
+                <span className="text-base">🕒</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <strong className="text-slate-900">Horarios</strong>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      isOpenNow
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                        : 'bg-red-100 text-red-700 border-red-300'
+                    }`}>
+                      {isOpenNow ? 'Abierto' : 'Cerrado'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Mar a Sáb 11:30-14:30 / 19:30-22:30 hs
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Mar a Sáb 11:30-14:30 / 19:30-22:30 hs
-                </p>
               </div>
+              <span className={`text-[10px] text-slate-500 transition-transform duration-200 ${isHoursOpen ? 'rotate-180' : ''}`}>
+                ▼
+              </span>
             </button>
 
-            {/* Desplegable de Horarios */}
             {isHoursOpen && (
-              <div className="absolute top-14 left-0 right-0 bg-white border border-slate-200 rounded-2xl p-3 shadow-xl z-20 text-xs space-y-1">
-                <p className="font-bold text-slate-800 border-b pb-1">Horarios Semanales:</p>
-                <div className="flex justify-between text-slate-600">
-                  <span>Martes a Sábado:</span>
-                  <span className="font-semibold">11:30 - 14:30 | 19:30 - 22:30</span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Domingo y Lunes:</span>
-                  <span className="font-semibold">Cerrado</span>
-                </div>
+              <div className="mt-2.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 grid gap-1.5 text-xs">
+                {schedule.map((item, index) => (
+                  <div key={index} className="flex justify-between items-center py-1 px-2 rounded-lg hover:bg-slate-100">
+                    <span className="font-bold text-slate-800 text-[11px]">{item.day}</span>
+                    <span className="text-slate-600 font-mono text-[10px]">
+                      {item.closed
+                        ? 'Cerrado'
+                        : item.singleShift
+                        ? `${item.open1} a ${item.close1} hs`
+                        : `${item.open1} a ${item.close1} hs y ${item.open2} a ${item.close2} hs`}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Ubicación y Mapa */}
-          <div className="flex items-center justify-between gap-3 border-t md:border-t-0 border-slate-100 pt-3 md:pt-0 w-full md:w-auto">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-slate-100 rounded-2xl text-slate-600 text-xl">📍</div>
-              <div>
-                <span className="font-extrabold text-sm block">Dónde estamos</span>
-                <p className="text-xs text-slate-500">Juan Angel Peña 3892, Mar del Plata</p>
-              </div>
+          <div className="w-full flex flex-col justify-between h-full">
+            <div className="mb-2">
+              <p className="text-[11px] text-slate-500 font-medium">Dónde estamos</p>
+              <h3 className="text-xs font-bold text-red-700 flex items-center gap-1">📍 Juan Angel Peña 3892, Mar del Plata</h3>
             </div>
-
-            <button
-              onClick={() => setIsMapOpen(true)}
-              className="bg-red-50 hover:bg-red-100 text-red-600 font-extrabold text-xs px-3 py-2 rounded-xl transition-all"
-            >
-              Ver Mapa
-            </button>
+            <div className="relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 shadow-inner group">
+              <iframe
+                title="Ubicación Como en casa"
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3145.4265147986065!2d-57.5512329!3d-37.9834715!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zMzc3NTknNTYuOSJTIDU3wrAzMyc0MC4zIlc!5e0!3m2!1ses!2sar!4v1680000000000!5m2!1ses!2sar"
+                className="w-full h-full border-0 grayscale group-hover:grayscale-0 transition-all duration-300 pointer-events-none"
+                loading="lazy"
+              ></iframe>
+              <a
+                href="https://maps.app.goo.gl/PLr6YzkZ1rh5wu8aA"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute inset-0 bg-red-950/20 hover:bg-red-950/10 flex items-center justify-center transition-all"
+              >
+                <span className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-[11px] px-3.5 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 scale-95 hover:scale-100 transition-all">
+                  <span>📍</span>
+                  <span>Abrir Maps</span>
+                </span>
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* BARRA DE CATEGORÍAS */}
-      <nav className="max-w-4xl mx-auto px-4 mt-6 sticky top-16 z-20 bg-slate-100/90 backdrop-blur-md py-2">
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS */}
+      <div className="sticky top-0 bg-slate-50/95 backdrop-blur-md shadow-sm z-10 py-3.5 border-b border-slate-200 my-4 w-full">
+        <div className="flex space-x-2.5 w-full px-6 overflow-x-auto scrollbar-none justify-start md:justify-center items-center">
           {categories.map((cat) => {
             const isSelected = selectedCategory === cat.id;
             return (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs whitespace-nowrap transition-all ${
+                className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition-all whitespace-nowrap flex items-center gap-2 border flex-shrink-0 ${
                   isSelected
-                    ? 'bg-red-600 text-white shadow-md shadow-red-200 scale-105'
-                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                    ? 'bg-red-600 text-white border-red-600 shadow-md shadow-red-600/20 scale-105'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                 }`}
               >
                 <span>{cat.icon || '🏷️'}</span>
@@ -454,388 +656,524 @@ export default function Home() {
             );
           })}
         </div>
-      </nav>
+      </div>
 
-      {/* LISTADO DE PRODUCTOS */}
-      <main className="max-w-4xl mx-auto px-4 mt-4">
+      {/* GRILLA DE PRODUCTOS */}
+      <main className="max-w-6xl mx-auto px-4 mt-4">
         {loading ? (
-          <div className="text-center py-20 text-slate-400 font-medium">
-            Cargando nuestro menú delicioso...
+          <div className="text-center py-16">
+            <div className="w-9 h-9 border-4 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+            <p className="text-xs text-slate-500">Cargando la mejor comida casera...</p>
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="text-center py-16 text-slate-400 font-medium bg-white rounded-3xl border border-slate-200">
-            No hay platos disponibles en esta categoría.
-          </div>
+          <div className="text-center py-16 text-slate-400 text-xs">No hay platos disponibles en esta categoría.</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProducts.map((product) => (
-              <div
-                key={product.id}
-                className="bg-white rounded-3xl p-3.5 border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow"
-              >
-                <div className="flex gap-3 items-start">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredProducts.map((product) => {
+              const priceNum = Number(product.price) || 0;
+              const hasPrice = priceNum > 0;
+
+              return (
+                <div
+                  key={product.id}
+                  className="bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm flex gap-3 hover:border-red-300 transition-all items-center justify-between"
+                >
                   <img
-                    src={product.image_url || '/logo.jpg'}
+                    src={product.image_url}
                     alt={product.name}
-                    className="w-20 h-20 rounded-2xl object-cover bg-slate-100 flex-shrink-0"
-                    onError={(e) => {
-                      e.target.src = '/logo.jpg';
-                    }}
+                    loading="lazy"
+                    className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-xl bg-slate-100 flex-shrink-0 shadow-inner"
                   />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-extrabold text-sm text-slate-900 truncate">
-                      {product.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
-                      {product.description || 'Deliciosa preparación casera recién hecha.'}
-                    </p>
+                  <div className="flex flex-col justify-between flex-1 ml-3 min-w-0 h-full">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm leading-snug truncate">{product.name}</h3>
+                      <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">{product.description}</p>
+                    </div>
+                    <div className="flex justify-between items-center mt-3 gap-2">
+                      {hasPrice ? (
+                        <span className="font-extrabold text-sm md:text-base text-red-600 flex-shrink-0">
+                          ${priceNum.toLocaleString()}
+                        </span>
+                      ) : (
+                        <div />
+                      )}
+                      <button
+                        onClick={() => openProductModal(product)}
+                        className={`text-xs px-3.5 py-1.5 rounded-xl font-extrabold transition-all shadow-sm flex-shrink-0 ml-auto ${
+                          isOpenNow
+                            ? 'bg-red-600 hover:bg-red-700 active:scale-95 text-white'
+                            : 'bg-slate-200 text-slate-500 hover:bg-slate-300'
+                        }`}
+                      >
+                        {isOpenNow ? '+ Agregar' : 'Cerrado'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
-                  <span className="font-black text-slate-900 text-sm">
-                    ${Number(product.price).toLocaleString('es-AR')}
-                  </span>
-
-                  <button
-                    onClick={() => handleProductClick(product)}
-                    disabled={!isOpenNow}
-                    className={`text-xs px-3.5 py-1.5 rounded-xl font-extrabold transition-all shadow-sm flex-shrink-0 ${
-                      isOpenNow
-                        ? 'bg-red-600 hover:bg-red-700 active:scale-95 text-white cursor-pointer'
-                        : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-70'
-                    }`}
-                  >
-                    {isOpenNow ? '+ Agregar' : 'Cerrado'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
 
-      {/* MODAL DE SELECCIÓN DE PRODUCTO (GUSTOS / ADICIONALES) */}
+      {/* MODAL DE PERSONALIZACIÓN */}
       {selectedProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
-            {/* Cabecera del Modal */}
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <div>
-                <h3 className="font-black text-base text-slate-900">{selectedProduct.name}</h3>
-                <p className="text-xs text-slate-500">${Number(selectedProduct.price).toLocaleString('es-AR')}</p>
-              </div>
-              <button
-                onClick={() => setSelectedProduct(null)}
-                className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 font-bold flex items-center justify-center hover:bg-slate-300"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Cuerpo del Modal */}
-            <div className="p-4 overflow-y-auto space-y-4">
-              {/* Opciones de Gustos o Adicionales */}
-              {availableModalAddons.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
-                      {selectedProduct.allows_flavor_selection ? 'Seleccioná los Gustos' : 'Adicionales'}
-                    </h4>
-                    {selectedProduct.allows_flavor_selection && (
-                      <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-lg">
-                        {totalAddonsSelectedCount} / {selectedProduct.max_flavors || 1}
-                      </span>
+        <div className="fixed inset-0 bg-slate-900/60 z-40 backdrop-blur-sm flex justify-end flex-col animate-fadeIn">
+          <div className="bg-white border-t border-slate-200 rounded-t-3xl p-5 max-w-md mx-auto w-full max-h-[92vh] overflow-y-auto text-slate-800 flex flex-col justify-between shadow-2xl">
+            <div>
+              <div className="flex justify-between items-start pb-3 border-b border-slate-200">
+                <div className="flex gap-3 items-center">
+                  <img
+                    src={selectedProduct.image_url}
+                    alt={selectedProduct.name}
+                    className="w-14 h-14 object-cover rounded-xl border border-slate-200"
+                  />
+                  <div>
+                    <h3 className="font-black text-red-700 text-base leading-snug">{selectedProduct.name}</h3>
+                    {Number(selectedProduct.price) > 0 && (
+                      <p className="text-xs font-bold text-slate-600 mt-0.5">${Number(selectedProduct.price).toLocaleString()}</p>
                     )}
                   </div>
+                </div>
+                <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-800 font-bold text-xl px-2">
+                  ✕
+                </button>
+              </div>
 
-                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden">
-                    {availableModalAddons.map((addon) => {
-                      const qty = selectedAddons[addon.id] || 0;
-                      return (
-                        <div key={addon.id} className="p-3 flex items-center justify-between bg-white">
-                          <div>
-                            <p className="font-bold text-xs text-slate-800">{addon.name}</p>
-                            {Number(addon.price) > 0 && (
-                              <p className="text-xs text-slate-500">+${Number(addon.price).toLocaleString('es-AR')}</p>
+              <p className="text-xs text-slate-500 mt-3 leading-relaxed">{selectedProduct.description}</p>
+
+              {/* VISTA PARA EMPANADAS (ACUMULABLE UNIFICADO) */}
+              {isEmpanadaProduct(selectedProduct) ? (
+                <div className="mt-5 space-y-3">
+                  {Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => (
+                    <div key={groupName} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                          Elegí tus gustos ({currentEmpFlavorsCount} / {totalEmpanadaLimit})
+                        </span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                          currentEmpFlavorsCount === totalEmpanadaLimit
+                            ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                            : 'bg-red-100 text-red-700 border-red-300'
+                        }`}>
+                          {currentEmpFlavorsCount === totalEmpanadaLimit
+                            ? 'Completo'
+                            : `Faltan ${totalEmpanadaLimit - currentEmpFlavorsCount}`}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-1.5 pt-1">
+                        {groupItems.map((addon) => {
+                          const qty = empFlavors[addon.id] || 0;
+                          return (
+                            <div
+                              key={addon.id}
+                              className={`flex justify-between items-center p-2 rounded-lg border text-xs font-semibold transition-all ${
+                                qty > 0
+                                  ? 'bg-red-50 border-red-300 text-red-900'
+                                  : 'bg-white border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <div>
+                                <span>{addon.name}</span>
+                                {addon.price > 0 && (
+                                  <span className="text-[10px] text-red-600 font-bold ml-1">
+                                    (+${Number(addon.price).toLocaleString()})
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => updateEmpanadaFlavorQuantity(addon.id, -1)}
+                                  disabled={qty === 0}
+                                  className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                >
+                                  -
+                                </button>
+                                <span className="text-xs font-bold w-4 text-center">{qty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateEmpanadaFlavorQuantity(addon.id, 1)}
+                                  disabled={currentEmpFlavorsCount >= totalEmpanadaLimit}
+                                  className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* VISTA PARA OTROS PLATOS (DESGLOSADO POR UNIDAD) */
+                <div className="mt-5 space-y-3">
+                  {unitsData.map((unit, unitIdx) => {
+                    const isOpen = openUnitIndex === unitIdx;
+                    const isFlavorMode = selectedProduct.allows_flavor_selection;
+
+                    return (
+                      <div
+                        key={unitIdx}
+                        className="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden transition-all shadow-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setOpenUnitIndex(isOpen ? -1 : unitIdx)}
+                          className="w-full flex items-center justify-between p-3 bg-slate-100/70 hover:bg-slate-200/60 transition-colors text-left"
+                        >
+                          <span className="text-xs font-extrabold text-red-700">
+                            {productQuantity > 1 ? `Unidad #${unitIdx + 1}` : 'Personalización de plato'}
+                          </span>
+
+                          <span className={`text-xs text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+                            ▼
+                          </span>
+                        </button>
+
+                        {isOpen && (
+                          <div className="p-3 border-t border-slate-200 bg-white space-y-4">
+                            {isFlavorMode && Object.keys(modalGroupedAddons).length > 0 ? (
+                              Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => {
+                                const lowerGroup = groupName.toLowerCase();
+                                const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa');
+                                const isCarneGroup = lowerGroup.includes('tipo de carne') || lowerGroup === 'carne' || lowerGroup === 'tipo';
+                                
+                                const selectedInGroup = groupItems.reduce((s, item) => s + (unit.flavorQuantities[item.id] || 0), 0);
+                                const maxLimit = selectedProduct.max_flavors || 0;
+
+                                let isGroupComplete = false;
+                                if (isGuarnicionOSalsa) {
+                                  isGroupComplete = maxLimit === 0 || selectedInGroup <= maxLimit;
+                                } else if (isCarneGroup) {
+                                  isGroupComplete = selectedInGroup === 1;
+                                } else {
+                                  isGroupComplete = maxLimit === 0 ? selectedInGroup >= 1 : (selectedInGroup >= 1 && selectedInGroup <= maxLimit);
+                                }
+
+                                return (
+                                  <div key={groupName} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                                    <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                                      <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                                        {groupName} {!isGuarnicionOSalsa && <span className="text-red-600">*</span>}
+                                      </span>
+                                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                                        isGroupComplete
+                                          ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                          : 'bg-red-100 text-red-700 border-red-300'
+                                      }`}>
+                                        {isGuarnicionOSalsa
+                                          ? selectedInGroup === 0 ? 'Opcional' : `${selectedInGroup} elegido`
+                                          : isCarneGroup
+                                          ? selectedInGroup === 1 ? 'Elegido' : 'Obligatorio (1)'
+                                          : selectedInGroup >= 1 ? `${selectedInGroup} elegido` : 'Obligatorio (mínimo 1)'}
+                                      </span>
+                                    </div>
+
+                                    <div className="grid gap-1.5 pt-1">
+                                      {groupItems.map((addon) => {
+                                        const qty = unit.flavorQuantities[addon.id] || 0;
+                                        return (
+                                          <div
+                                            key={addon.id}
+                                            className={`flex justify-between items-center p-2 rounded-lg border text-xs font-semibold transition-all ${
+                                              qty > 0
+                                                ? 'bg-red-50 border-red-300 text-red-900'
+                                                : 'bg-white border-slate-200 text-slate-700'
+                                            }`}
+                                          >
+                                            <div>
+                                              <span>{addon.name}</span>
+                                              {addon.price > 0 && (
+                                                <span className="text-[10px] text-red-600 font-bold ml-1">
+                                                  (+${Number(addon.price).toLocaleString()})
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                                              <button
+                                                type="button"
+                                                onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, -1)}
+                                                disabled={qty === 0}
+                                                className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                              >
+                                                -
+                                              </button>
+                                              <span className="text-xs font-bold w-4 text-center">{qty}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => updateFlavorQuantityForUnit(unitIdx, addon.id, 1)}
+                                                className="font-black text-red-600 disabled:opacity-30 text-sm px-1"
+                                              >
+                                                +
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">Sin personalizaciones obligatorias.</p>
                             )}
                           </div>
-
-                          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
-                            <button
-                              onClick={() => handleAddonQuantityChange(addon.id, -1)}
-                              className="w-6 h-6 bg-white rounded-lg font-black text-xs text-slate-700 shadow-sm flex items-center justify-center"
-                            >
-                              -
-                            </button>
-                            <span className="text-xs font-black px-1">{qty}</span>
-                            <button
-                              onClick={() => handleAddonQuantityChange(addon.id, 1)}
-                              className="w-6 h-6 bg-white rounded-lg font-black text-xs text-slate-700 shadow-sm flex items-center justify-center"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Cantidad total de esta variedad */}
-              <div className="flex items-center justify-between pt-2">
-                <span className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">Cantidad</span>
-                <div className="flex items-center gap-3 bg-slate-100 p-1.5 rounded-2xl">
-                  <button
-                    onClick={() => setModalQuantity(Math.max(1, modalQuantity - 1))}
-                    className="w-8 h-8 bg-white rounded-xl font-black text-sm text-slate-800 shadow-sm flex items-center justify-center"
-                  >
-                    -
-                  </button>
-                  <span className="font-black text-sm px-2">{modalQuantity}</span>
-                  <button
-                    onClick={() => setModalQuantity(modalQuantity + 1)}
-                    className="w-8 h-8 bg-white rounded-xl font-black text-sm text-slate-800 shadow-sm flex items-center justify-center"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* Notas del producto */}
-              <div>
-                <label className="block font-extrabold text-xs text-slate-700 uppercase tracking-wider mb-1">
-                  Notas / Especificaciones
+              {/* Aclaraciones */}
+              <div className="mt-5">
+                <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500 block mb-1.5">
+                  Aclaraciones para el pedido
                 </label>
-                <textarea
-                  placeholder="Ej: Bien cocido / Sin salsa"
-                  value={modalNotes}
-                  onChange={(e) => setModalNotes(e.target.value)}
-                  rows={2}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
+                <input
+                  type="text"
+                  placeholder="Ej: Sin sal, la ensalada bien condimentada..."
+                  value={itemNotes}
+                  onChange={(e) => setItemNotes(e.target.value)}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-red-600 text-slate-800"
                 />
               </div>
             </div>
 
-            {/* Pie del Modal */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
-              <div>
-                <span className="text-xs text-slate-500 block">Subtotal</span>
-                <span className="font-black text-lg text-slate-900">
-                  ${(calculatedModalUnitPrice * modalQuantity).toLocaleString('es-AR')}
-                </span>
+            {/* Controles de Cantidad */}
+            <div className="pt-5 border-t border-slate-200 mt-5 flex gap-3 items-center">
+              <div className="flex items-center space-x-2 bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
+                <button
+                  onClick={() => handleQuantityChange(productQuantity - 1)}
+                  className="font-black text-red-600 hover:text-red-700 px-1 text-base"
+                >
+                  -
+                </button>
+                <span className="text-xs font-bold w-5 text-center text-slate-900">{productQuantity}</span>
+                <button
+                  onClick={() => handleQuantityChange(productQuantity + 1)}
+                  className="font-black text-red-600 hover:text-red-700 px-1 text-base"
+                >
+                  +
+                </button>
               </div>
 
               <button
-                onClick={confirmAddToCartFromModal}
-                className="bg-red-600 hover:bg-red-700 text-white font-black text-xs px-6 py-3 rounded-2xl shadow-md transition-all active:scale-95"
+                onClick={handleConfirmAddToCart}
+                disabled={!isAllUnitsValid()}
+                className={`flex-1 font-black py-3 px-4 rounded-xl shadow-md text-xs flex justify-between items-center transition-all ${
+                  isAllUnitsValid()
+                    ? 'bg-red-600 hover:bg-red-700 text-white active:scale-98'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                }`}
               >
-                Agregar al Carrito
+                <span>
+                  {!isAllUnitsValid()
+                    ? isEmpanadaProduct(selectedProduct)
+                      ? `Completá las ${totalEmpanadaLimit} empanadas`
+                      : 'Seleccioná la opción obligatoria'
+                    : 'Agregar al Pedido'}
+                </span>
+                <span>${calculateTotalPrice().toLocaleString()}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MAPA MODAL */}
-      {isMapOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-4">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="font-black text-sm">Nuestra Ubicación</h3>
-              <button
-                onClick={() => setIsMapOpen(false)}
-                className="w-7 h-7 rounded-full bg-slate-100 font-bold text-xs"
-              >
+      {/* BOTÓN FLOTANTE CARRITO */}
+      {cart.length > 0 && (
+        <div className="fixed bottom-5 left-0 right-0 px-4 z-20 max-w-md mx-auto">
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 px-6 rounded-2xl shadow-xl shadow-red-600/20 flex justify-between items-center font-black text-sm transition-transform active:scale-95"
+          >
+            <span className="bg-white text-red-600 px-2.5 py-1 rounded-lg text-xs font-black">
+              {cart.reduce((a, b) => a + b.quantity, 0)} ítems
+            </span>
+            <span>Ver Mi Pedido</span>
+            <span>${cartTotal.toLocaleString()}</span>
+          </button>
+        </div>
+      )}
+
+      {/* MODAL / CARRITO DE COMPRAS */}
+      {isCartOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 backdrop-blur-md flex justify-end flex-col animate-fadeIn">
+          <div className="bg-white border-t border-slate-200 rounded-t-3xl p-6 max-w-md mx-auto w-full max-h-[88vh] overflow-y-auto text-slate-800 shadow-2xl">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+              <h2 className="text-lg font-black text-red-700">Tu Pedido</h2>
+              <button onClick={() => setIsCartOpen(false)} className="text-slate-400 hover:text-slate-800 font-bold text-xl px-2">
                 ✕
               </button>
             </div>
-            <div className="w-full h-64 rounded-2xl overflow-hidden bg-slate-100">
-              <iframe
-                title="Ubicacion Como en Casa"
-                src="https://maps.google.com/maps?q=Juan%20Angel%20Pe%C3%B1a%203892,%20Mar%20del%20Plata&t=&z=15&ie=UTF8&iwloc=&output=embed"
-                width="100%"
-                height="100%"
-                style={{ border: 0 }}
-                loading="lazy"
-              ></iframe>
+
+            <div className="py-4 divide-y divide-slate-100">
+              {cart.map((item) => (
+                <div key={item.cartItemId} className="flex justify-between items-start py-3">
+                  <div className="pr-2">
+                    <p className="font-bold text-sm text-slate-900">{item.name}</p>
+
+                    {item.units &&
+                      item.units.map((u, i) => {
+                        const hasFlavors = u.flavors && u.flavors.length > 0;
+                        const hasAddons = u.addons && u.addons.length > 0;
+                        if (!hasFlavors && !hasAddons) return null;
+
+                        return (
+                          <div key={i} className="text-[11px] text-red-600 font-medium mt-0.5">
+                            ↳ {hasFlavors && u.flavors.map((f) => (f.qty > 1 ? `${f.qty}x ${f.name}` : f.name)).join(', ')}
+                            {hasFlavors && hasAddons ? ' | Extras: ' : ''}
+                            {hasAddons && u.addons.map((a) => a.name).join(', ')}
+                          </div>
+                        );
+                      })}
+
+                    {item.notes && <p className="text-[11px] text-slate-400 italic mt-0.5">"{item.notes}"</p>}
+                    <p className="text-xs text-red-600 font-bold mt-1">
+                      ${item.totalPrice.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2 bg-slate-100 rounded-xl px-2.5 py-1 border border-slate-200 flex-shrink-0">
+                    <button
+                      onClick={() => updateQuantityInCart(item.cartItemId, -1)}
+                      className="font-black text-red-600 hover:text-red-700 px-1 text-sm"
+                    >
+                      -
+                    </button>
+                    <span className="text-xs font-bold w-4 text-center text-slate-800">{item.quantity}</span>
+                    <button
+                      onClick={() => updateQuantityInCart(item.cartItemId, 1)}
+                      className="font-black text-red-600 hover:text-red-700 px-1 text-sm"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
+
+            <form onSubmit={sendWhatsAppOrder} className="space-y-3.5 pt-2">
+              <div>
+                <label className="text-xs font-semibold text-slate-500 block mb-1">Tu Nombre *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Juan Pérez"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOrderType('Delivery')}
+                  className={`flex-1 py-2.5 text-xs font-extrabold rounded-xl border transition-all ${
+                    orderType === 'Delivery'
+                      ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  🛵 Delivery
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderType('Retiro')}
+                  className={`flex-1 py-2.5 text-xs font-extrabold rounded-xl border transition-all ${
+                    orderType === 'Retiro'
+                      ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  🛍️ Retiro en local
+                </button>
+              </div>
+
+              {orderType === 'Delivery' && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 block mb-1">Dirección de Envío *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Calle, Número y Piso"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-slate-500 block mb-1">Forma de Pago</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-red-600 text-slate-800"
+                >
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia / Mercado Pago">Transferencia / Mercado Pago</option>
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/20 mt-4 text-sm flex items-center justify-center gap-2"
+              >
+                <span>Enviar Pedido por WhatsApp 📲</span>
+              </button>
+            </form>
           </div>
         </div>
       )}
 
-      {/* BARRA FLOTANTE INFERIOR DEL CARRITO */}
-      {cart.length > 0 && !isCartOpen && (
-        <div className="fixed bottom-4 left-0 right-0 px-4 z-30">
-          <div className="max-w-xl mx-auto bg-slate-900 text-white rounded-3xl p-3 shadow-2xl flex items-center justify-between border border-slate-800">
-            <div className="flex items-center gap-3 pl-2">
-              <span className="bg-red-600 text-white text-xs font-black px-2.5 py-1 rounded-xl">
-                {cart.reduce((a, b) => a + b.quantity, 0)} items
-              </span>
-              <span className="font-black text-sm">
-                ${cartTotal.toLocaleString('es-AR')}
-              </span>
+      {/* CARTEL / MODAL AVISO LOCAL CERRADO */}
+      {isClosedNoticeOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl border border-slate-100">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 border border-red-200">
+              🔒
+            </div>
+            <h3 className="font-black text-slate-900 text-lg mb-1 uppercase tracking-tight">
+              El local está cerrado
+            </h3>
+            <p className="text-xs text-slate-500 font-medium leading-relaxed mb-4">
+              En este momento no estamos tomando pedidos. Por favor, revisá nuestros horarios de atención para realizar tu compra cuando estemos abiertos.
+            </p>
+            
+            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs text-slate-700 mb-5 space-y-1 text-left">
+              <p className="font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1.5 flex items-center justify-between">
+                <span>🕒 Horarios de Atención:</span>
+              </p>
+              <div className="flex justify-between py-0.5">
+                <span className="font-medium text-slate-600">Mar a Sáb:</span>
+                <span className="font-bold text-red-600">11:30-14:30 / 19:30-22:30</span>
+              </div>
+              <div className="flex justify-between py-0.5">
+                <span className="font-medium text-slate-600">Domingos:</span>
+                <span className="font-bold text-red-600">11:30 - 14:30</span>
+              </div>
+              <div className="flex justify-between py-0.5">
+                <span className="font-medium text-slate-600">Lunes:</span>
+                <span className="font-bold text-slate-400">Cerrado</span>
+              </div>
             </div>
 
             <button
-              onClick={() => setIsCartOpen(true)}
-              className="bg-red-600 hover:bg-red-700 text-white font-black text-xs px-5 py-2.5 rounded-2xl transition-all active:scale-95 flex items-center gap-1.5"
+              onClick={() => setIsClosedNoticeOpen(false)}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3.5 rounded-2xl text-xs transition-all shadow-md active:scale-95"
             >
-              <span>Ver Pedido</span>
-              <span>➔</span>
+              Entendido
             </button>
           </div>
         </div>
       )}
 
-      {/* DRAWER DEL CARRITO */}
-      {isCartOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end">
-          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col justify-between overflow-y-auto p-5 animate-in slide-in-from-right duration-200">
-            <div>
-              <div className="flex items-center justify-between pb-4 border-b border-slate-200">
-                <h2 className="font-black text-lg text-slate-900">Tu Pedido</h2>
-                <button
-                  onClick={() => setIsCartOpen(false)}
-                  className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 font-bold text-sm flex items-center justify-center hover:bg-slate-200"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {cart.length === 0 ? (
-                <div className="text-center py-16 text-slate-400 font-medium">
-                  Tu carrito está vacío.
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100 my-4">
-                  {cart.map((item) => (
-                    <div key={item.cartItemId} className="py-3 flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <p className="font-extrabold text-sm text-slate-900">{item.name}</p>
-                        <p className="text-xs text-slate-500">
-                          ${(item.price * item.quantity).toLocaleString('es-AR')}
-                        </p>
-
-                        {/* Gustos o Adicionales seleccionados */}
-                        {item.addonDetails && item.addonDetails.length > 0 && (
-                          <div className="mt-1 text-xs text-slate-500 space-y-0.5">
-                            {item.addonDetails.map((a, idx) => (
-                              <p key={idx}>• {a.quantity}x {a.name}</p>
-                            ))}
-                          </div>
-                        )}
-
-                        {item.notes && (
-                          <p className="text-xs italic text-slate-400 mt-0.5">"{item.notes}"</p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
-                        <button
-                          onClick={() => updateCartQuantity(item.cartItemId, -1)}
-                          className="w-6 h-6 bg-white rounded-lg font-black text-slate-700 text-xs shadow-sm flex items-center justify-center"
-                        >
-                          -
-                        </button>
-                        <span className="font-black text-xs text-slate-900 px-1">
-                          {item.quantity}
-                        </span>
-                        <button
-                          onClick={() => updateCartQuantity(item.cartItemId, 1)}
-                          className="w-6 h-6 bg-white rounded-lg font-black text-slate-700 text-xs shadow-sm flex items-center justify-center"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* FORMULARIO DE ENVÍO */}
-              {cart.length > 0 && (
-                <form onSubmit={sendWhatsAppOrder} className="space-y-3 mt-6 pt-4 border-t border-slate-200">
-                  <h3 className="font-extrabold text-xs text-slate-400 uppercase tracking-wider">
-                    Datos de Entrega
-                  </h3>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Nombre Completo *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ej: Juan Pérez"
-                      value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Dirección de Envío *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ej: Jujuy 1234, 2° B"
-                      value={customerAddress}
-                      onChange={(e) => setCustomerAddress(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Forma de Pago</label>
-                    <select
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
-                    >
-                      <option value="Efectivo">Efectivo</option>
-                      <option value="Transferencia / MP">Transferencia / Mercado Pago</option>
-                      <option value="Débito / Crédito">Débito / Crédito</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Aclaraciones generales</label>
-                    <textarea
-                      placeholder="Ej: Timbre ruidoso / Traer cambio de $20.000"
-                      value={customerNotes}
-                      onChange={(e) => setCustomerNotes(e.target.value)}
-                      rows={2}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-200">
-                    <div className="flex justify-between items-center mb-4">
-                      <span className="font-extrabold text-sm text-slate-700">Total a Pagar:</span>
-                      <span className="font-black text-lg text-slate-900">
-                        ${cartTotal.toLocaleString('es-AR')}
-                      </span>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={!isOpenNow}
-                      className={`w-full py-3.5 rounded-2xl font-black text-xs text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
-                        isOpenNow
-                          ? 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 cursor-pointer'
-                          : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                      }`}
-                    >
-                      <span>{isOpenNow ? 'Enviar Pedido por WhatsApp' : 'Local Cerrado'}</span>
-                      {isOpenNow && <span>📲</span>}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
