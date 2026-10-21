@@ -342,7 +342,9 @@ export default function MenuPage() {
         const lowerName = groupName.toLowerCase();
         const selectedInGroup = groupItems.reduce((sum, item) => sum + (unit.flavorQuantities[item.id] || 0), 0);
 
-        const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa');
+        // AQUI SE INCLUYE MEDALLON, EXTRA Y ADICIONAL COMO GRUPO OPCIONAL
+        const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa') || lowerName.includes('medallon') || lowerName.includes('medallón') || lowerName.includes('extra') || lowerName.includes('adicional');
+        
         if (isOpcionalGroup) {
           const maxLimit = selectedProduct.max_flavors || 0;
           return maxLimit === 0 ? true : selectedInGroup <= maxLimit;
@@ -492,7 +494,7 @@ export default function MenuPage() {
         const parts = [];
         if (u.flavors && u.flavors.length > 0) {
           const fStr = u.flavors.map((f) => f.qty > 1 ? `${f.qty}x ${f.name}` : f.name).join(', ');
-          parts.push(`Gustos: ${fStr}`);
+          parts.push(`Gustos/Opciones: ${fStr}`);
         }
         if (u.addons && u.addons.length > 0) {
           const aStr = u.addons.map((a) => a.name).join(', ');
@@ -840,7 +842,10 @@ export default function MenuPage() {
                             {isFlavorMode && Object.keys(modalGroupedAddons).length > 0 ? (
                               Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => {
                                 const lowerGroup = groupName.toLowerCase();
-                                const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa');
+                                
+                                // AQUI SE APLICA LA MODIFICACIÓN PARA QUE MEDALLON SEA OPCIONAL
+                                const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa') || lowerGroup.includes('medallon') || lowerGroup.includes('medallón') || lowerGroup.includes('extra') || lowerGroup.includes('adicional');
+                                
                                 const isCarneGroup = lowerGroup.includes('tipo de carne') || lowerGroup === 'carne' || lowerGroup === 'tipo';
                                 
                                 const selectedInGroup = groupItems.reduce((s, item) => s + (unit.flavorQuantities[item.id] || 0), 0);
