@@ -1,7 +1,5 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
@@ -57,7 +55,7 @@ export default function MenuPage() {
     { day: 'Domingo', dayIndex: 0, open1: '11:30', close1: '14:30', singleShift: true },
   ], []);
 
-  // Inicializar la hora del cliente tras el montaje (Evita prerender error en Vercel)
+  // Inicializar la hora únicamente cuando el componente se monta en el navegador
   useEffect(() => {
     setNow(new Date());
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -66,8 +64,8 @@ export default function MenuPage() {
 
   // EVALUAR SI EL LOCAL ESTÁ ABIERTO EN TIEMPO REAL
   const isOpenNow = useMemo(() => {
-    if (isForcedClosed) return false;
     if (!now) return false;
+    if (isForcedClosed) return false;
 
     const currentDayIndex = now.getDay();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
