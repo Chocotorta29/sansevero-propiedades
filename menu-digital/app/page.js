@@ -342,7 +342,7 @@ export default function MenuPage() {
         const lowerName = groupName.toLowerCase();
         const selectedInGroup = groupItems.reduce((sum, item) => sum + (unit.flavorQuantities[item.id] || 0), 0);
 
-        // AQUI SE INCLUYE MEDALLON, EXTRA Y ADICIONAL COMO GRUPO OPCIONAL
+        // GRUPOS OPCIONALES (MINIMO 0)
         const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa') || lowerName.includes('medallon') || lowerName.includes('medallón') || lowerName.includes('extra') || lowerName.includes('adicional');
         
         if (isOpcionalGroup) {
@@ -638,7 +638,7 @@ export default function MenuPage() {
         </div>
       </section>
 
-      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS */}
+      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS (SIN CURSOR DE ESCRITURA) */}
       <div className="sticky top-0 bg-slate-50/95 backdrop-blur-md shadow-sm z-10 py-3.5 border-b border-slate-200 my-4 w-full">
         <div className="flex space-x-2.5 w-full px-6 overflow-x-auto scrollbar-none justify-start md:justify-center items-center">
           {categories.map((cat) => {
@@ -647,7 +647,7 @@ export default function MenuPage() {
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition-all whitespace-nowrap flex items-center gap-2 border flex-shrink-0 ${
+                className={`select-none outline-none px-4 py-2 rounded-2xl text-xs font-extrabold transition-all whitespace-nowrap flex items-center gap-2 border flex-shrink-0 ${
                   isSelected
                     ? 'bg-red-600 text-white border-red-600 shadow-md shadow-red-600/20 scale-105'
                     : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -843,7 +843,6 @@ export default function MenuPage() {
                               Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => {
                                 const lowerGroup = groupName.toLowerCase();
                                 
-                                // AQUI SE APLICA LA MODIFICACIÓN PARA QUE MEDALLON SEA OPCIONAL
                                 const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa') || lowerGroup.includes('medallon') || lowerGroup.includes('medallón') || lowerGroup.includes('extra') || lowerGroup.includes('adicional');
                                 
                                 const isCarneGroup = lowerGroup.includes('tipo de carne') || lowerGroup === 'carne' || lowerGroup === 'tipo';
