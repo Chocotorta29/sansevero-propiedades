@@ -342,9 +342,19 @@ export default function MenuPage() {
         const lowerName = groupName.toLowerCase();
         const selectedInGroup = groupItems.reduce((sum, item) => sum + (unit.flavorQuantities[item.id] || 0), 0);
 
-        // GRUPOS OPCIONALES (MINIMO 0)
-        const isOpcionalGroup = lowerName.includes('guarnicion') || lowerName.includes('guarnición') || lowerName.includes('salsa') || lowerName.includes('medallon') || lowerName.includes('medallón') || lowerName.includes('extra') || lowerName.includes('adicional');
-        
+        const isOpcionalGroup =
+          lowerName.includes('guarnicion') ||
+          lowerName.includes('guarnición') ||
+          lowerName.includes('salsa') ||
+          lowerName.includes('medallon') ||
+          lowerName.includes('medallón') ||
+          lowerName.includes('extra') ||
+          lowerName.includes('adicional') ||
+          lowerName.includes('hamburguesa') ||
+          lowerName.includes('opcional') ||
+          lowerName.includes('agregado') ||
+          lowerName.includes('aderezo');
+
         if (isOpcionalGroup) {
           const maxLimit = selectedProduct.max_flavors || 0;
           return maxLimit === 0 ? true : selectedInGroup <= maxLimit;
@@ -425,19 +435,36 @@ export default function MenuPage() {
 
     const cartItemId = `${selectedProduct.id}-${JSON.stringify(isEmpanadaProduct(selectedProduct) ? empFlavors : unitsData)}-${itemNotes.trim()}`;
 
-    const cartItem = {
-      cartItemId,
-      id: selectedProduct.id,
-      name: selectedProduct.name,
-      basePrice: Number(selectedProduct.price) || 0,
-      price: totalPrice / productQuantity,
-      totalPrice: totalPrice,
-      quantity: productQuantity,
-      units: formattedUnits,
-      notes: itemNotes.trim()
-    };
+    setCart((prev) => {
+      const existingIndex = prev.findIndex((item) => item.cartItemId === cartItemId);
 
-    setCart((prev) => [...prev, cartItem]);
+      if (existingIndex > -1) {
+        const updated = [...prev];
+        const existingItem = updated[existingIndex];
+        const newQty = existingItem.quantity + productQuantity;
+
+        updated[existingIndex] = {
+          ...existingItem,
+          quantity: newQty,
+          totalPrice: existingItem.totalPrice + totalPrice
+        };
+        return updated;
+      } else {
+        const cartItem = {
+          cartItemId,
+          id: selectedProduct.id,
+          name: selectedProduct.name,
+          basePrice: Number(selectedProduct.price) || 0,
+          price: totalPrice / productQuantity,
+          totalPrice: totalPrice,
+          quantity: productQuantity,
+          units: formattedUnits,
+          notes: itemNotes.trim()
+        };
+        return [...prev, cartItem];
+      }
+    });
+
     setSelectedProduct(null);
   };
 
@@ -638,7 +665,7 @@ export default function MenuPage() {
         </div>
       </section>
 
-      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS (SIN CURSOR DE ESCRITURA) */}
+      {/* PESTAÑAS DE CATEGORÍAS CENTRADAS */}
       <div className="sticky top-0 bg-slate-50/95 backdrop-blur-md shadow-sm z-10 py-3.5 border-b border-slate-200 my-4 w-full">
         <div className="flex space-x-2.5 w-full px-6 overflow-x-auto scrollbar-none justify-start md:justify-center items-center">
           {categories.map((cat) => {
@@ -843,7 +870,18 @@ export default function MenuPage() {
                               Object.entries(modalGroupedAddons).map(([groupName, groupItems]) => {
                                 const lowerGroup = groupName.toLowerCase();
                                 
-                                const isGuarnicionOSalsa = lowerGroup.includes('guarnicion') || lowerGroup.includes('guarnición') || lowerGroup.includes('salsa') || lowerGroup.includes('medallon') || lowerGroup.includes('medallón') || lowerGroup.includes('extra') || lowerGroup.includes('adicional');
+                                const isGuarnicionOSalsa =
+                                  lowerGroup.includes('guarnicion') ||
+                                  lowerGroup.includes('guarnición') ||
+                                  lowerGroup.includes('salsa') ||
+                                  lowerGroup.includes('medallon') ||
+                                  lowerGroup.includes('medallón') ||
+                                  lowerGroup.includes('extra') ||
+                                  lowerGroup.includes('adicional') ||
+                                  lowerGroup.includes('hamburguesa') ||
+                                  lowerGroup.includes('opcional') ||
+                                  lowerGroup.includes('agregado') ||
+                                  lowerGroup.includes('aderezo');
                                 
                                 const isCarneGroup = lowerGroup.includes('tipo de carne') || lowerGroup === 'carne' || lowerGroup === 'tipo';
                                 
